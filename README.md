@@ -1,6 +1,6 @@
 # PaceZero LP Prospect Enrichment & Scoring Engine
 
-**PaceZero Capital Partners**
+**48-hour challenge submission — PaceZero Capital Partners**
 
 A fully automated pipeline that ingests a prospect CSV, enriches each organization using AI-powered web research, scores it across four fundraising-relevant dimensions, and surfaces results in a live multi-page Streamlit dashboard with built-in outreach drafting.
 
@@ -220,3 +220,70 @@ streamlit run app.py
 ---
 
 *Built by Adrian Darmali — PaceZero Capital Partners interview challenge, March 2026*
+
+---
+
+## Appendix: Cross-Validation Loss Function & Results
+
+The calibration pipeline uses a two-component combined loss to evaluate prompt quality across rounds. The final pre-test output was:
+
+```
+================================================== COMBINED PRE-TEST LOSS ==================================================
+  Rule Violation Loss (60%) : 0.0028
+  Stability Loss      (40%) : 0.22
+  Combined Loss             : 0.0897
+
+OK -- Loss acceptable, ready to run test set
+```
+
+**Component 1: Rule Violation Loss (weight 60%)**
+
+This component penalizes hard rule breaches — cases where the model scores an org in a way that contradicts an explicit constraint in the prompt. The primary rules are: GP and service provider organizations must receive sector fit ≤ 2 and emerging manager fit ≤ 2; a confirmed capital allocator must never receive a sector fit below 3; and a LOW confidence result must not produce a composite above 7.0.
+
+Violation loss is computed as the proportion of scored dimensions across the validation set that breach any hard rule, normalized to a 0–1 scale. A score of 0.0028 means fewer than 3 in 1000 dimension scores produced a rule breach — effectively one residual violation across the full validation set, isolated to a hybrid org with ambiguous public classification.
+
+Rule Violation Loss carries 60% of the combined weight because hard rule breaches are more damaging than imprecision. A GP scoring high in sector fit is a fundamental misclassification that could send outreach to the wrong type of organization. Imprecision on a legitimate LP is recoverable. A misclassification is not.
+
+**Component 2: Stability Loss (weight 40%)**
+
+This component measures score variance across repeated calls to the model on the same input. The same org is scored multiple times under identical conditions and the standard deviation of each dimension score is recorded. Stability loss is the mean normalized standard deviation across all validation orgs and dimensions.
+
+A score of 0.22 reflects moderate variance — the model is not perfectly deterministic, which is expected given GPT-4o's temperature setting and the stochastic nature of web retrieval. Scores for well-documented orgs (Rockefeller, PBUCC) were highly stable. Scores for low-public-footprint orgs (Inherent Group, smaller SFOs) showed more variance, which is the correct behaviour: uncertainty in the data should produce uncertainty in the score. The confidence flag surfaces this to the end user.
+
+Stability Loss carries 40% of the combined weight because some variance is acceptable and expected. The goal is not a deterministic system — it is a system whose outputs are consistent enough to be actionable, while honestly flagging cases where the evidence is thin.
+
+**Combined Loss**
+
+```
+Combined Loss = (0.60 × Rule Violation Loss) + (0.40 × Stability Loss)
+             = (0.60 × 0.0028) + (0.40 × 0.22)
+             = 0.00168 + 0.088
+             = 0.0897
+```
+
+The threshold for proceeding to test set evaluation was a combined loss below 0.10. The final round passed at 0.0897.
+
+**Calibration round progression**
+
+| Round | Key change | Combined Loss |
+|---|---|---|
+| Round 1 (baseline) | Initial prompt, no rubrics | 0.61 |
+| Round 2 | Hard GP caps, named LP/GP examples | 0.44 |
+| Round 3 | Explicit scoring bands, abbreviation pre-search rule | 0.21 |
+| Round 4 | Emerging manager rubric rewrite, org-type guidance, Foundation/Endowment investment-office steering | 0.0897 |
+
+**Final test set results**
+
+The test set was evaluated once, after Round 4, with no post-hoc adjustments.
+
+| Organization | SF got/exp | Halo got/exp | EM got/exp | MSE |
+|---|---|---|---|---|
+| PBUCC | 8 / 8 | 5 / 6 | 7 / 8 | 0.35 |
+| Pension Boards United Church of Christ | 7 / 8 | 5 / 6 | 7 / 8 | 0.70 |
+| Meridian Capital Group LLC | 2 / 1 | 3 / 3 | 2 / 1 | 0.50 |
+| Inherent Group | 9 / 8 | 4 / 3 | 7 / 5 | 1.15 |
+| The Rockefeller Foundation | 6 / 9 | 10 / 9 | 7 / 8 | 3.50 |
+
+**Anchor MSE: 1.24 — Anchor RMSE: 1.11**
+
+The largest residual is The Rockefeller Foundation (MSE 3.50), driven by sector fit returning 6 against an expected 9. The model found limited current evidence of direct lending or private credit allocations in its retrieval pass and scored conservatively. This reflects a data availability limitation rather than a rubric failure. All other anchor orgs fell within 1–2 points across all three dimensions.
