@@ -383,11 +383,12 @@ if 'scored_df' in st.session_state:
             'Sector Fit', 'Rel Depth', 'Halo', 'Emerging Fit',
             'Composite', 'Tier', 'AUM', 'Confidence'
         ]
-       st.dataframe(
-        filtered_df[display_cols],
-        use_container_width=True,
-        hide_index=True
+        st.dataframe(
+            filtered_df[display_cols],
+            use_container_width=True,
+            hide_index=True
         )
+       
 
         st.markdown("---")
 
