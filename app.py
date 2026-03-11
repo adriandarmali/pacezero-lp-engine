@@ -4,7 +4,22 @@ import numpy as np
 import json
 import time
 import urllib.parse
+import logging
+import os
 from openai import OpenAI
+
+# ── Logging setup ──
+LOG_FILE = "pacezero_pipeline.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler(),          # also prints to Streamlit Cloud logs
+    ]
+)
+logger = logging.getLogger("pacezero")
 
 st.set_page_config(
     page_title="PaceZero LP Scoring Engine",
@@ -52,6 +67,20 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 MODEL  = "gpt-4o"
 WEIGHTS = {'sector_fit':0.35,'relationship_depth':0.30,'halo_value':0.20,'emerging_fit':0.15}
 TIERS   = [(8.0,'PRIORITY CLOSE'),(6.5,'STRONG FIT'),(5.0,'MODERATE FIT'),(0.0,'WEAK FIT')]
+
+CHECK_SIZE_ALLOC = {
+    "Pension":              (0.005, 0.020),
+    "Insurance":            (0.005, 0.020),
+    "Endowment":            (0.010, 0.030),
+    "Foundation":           (0.010, 0.030),
+    "Fund of Funds":        (0.020, 0.050),
+    "Multi-Family Office":  (0.020, 0.050),
+    "Single Family Office": (0.030, 0.100),
+    "HNWI":                 (0.030, 0.100),
+    "Asset Manager":        (0.005, 0.030),
+    "RIA/FIA":              (0.005, 0.030),
+    "Private Capital Firm": (0.005, 0.030),
+}
 TEST_ORGS = ["PBUCC","Pension Boards United Church of Christ","Meridian Capital Group LLC","Inherent Group","The Rockefeller Foundation"]
 ORG_TYPES = ["Single Family Office","Multi-Family Office","Fund of Funds","Foundation","Endowment","Pension","Insurance","Asset Manager","RIA/FIA","HNWI","Private Capital Firm"]
 CONTACT_STATUSES = ["New Contact","Previously Contacted","Existing Contact","In Diligence","Committed","Passed"]
@@ -184,6 +213,25 @@ STATUS_GUIDANCE = {
 def compute_composite(sf, rel, halo, em):
     return round(sf*WEIGHTS['sector_fit'] + rel*WEIGHTS['relationship_depth'] + halo*WEIGHTS['halo_value'] + em*WEIGHTS['emerging_fit'], 2)
 
+def compute_check_size(aum_millions, org_type):
+    """Return a human-readable estimated check size range, or None if AUM unknown."""
+    if not aum_millions:
+        return None
+    lo, hi = None, None
+    for key, (lo_pct, hi_pct) in CHECK_SIZE_ALLOC.items():
+        if key.lower() in org_type.lower():
+            lo, hi = lo_pct, hi_pct
+            break
+    if lo is None:
+        lo, hi = 0.005, 0.030  # fallback
+    lo_m = aum_millions * lo
+    hi_m = aum_millions * hi
+    def fmt(m):
+        if m >= 1000: return f"${m/1000:.1f}B"
+        if m >= 1:    return f"${m:.1f}M"
+        return f"${m*1000:.0f}K"
+    return f"{fmt(lo_m)} – {fmt(hi_m)}"
+
 def classify_tier(composite):
     for threshold, label in TIERS:
         if composite >= threshold:
@@ -198,12 +246,14 @@ def conf_badge(conf):
     return f'<span class="badge-{(conf or "LOW").lower()}">{conf}</span>'
 
 def score_org(org_name, org_type, role):
+    logger.info(f"Scoring: {org_name} ({org_type})")
     prompt   = SCORING_PROMPT.format(org_name=org_name, org_type=org_type, role=role)
     response = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":prompt}], response_format={"type":"json_object"}, max_tokens=1000)
     data = json.loads(response.choices[0].message.content.strip())
     data['_input_tokens']  = response.usage.prompt_tokens
     data['_output_tokens'] = response.usage.completion_tokens
     data['_tokens']        = response.usage.total_tokens
+    logger.info(f"  Scored: {org_name} — SF={data.get('sector_fit_score')} Halo={data.get('halo_score')} EM={data.get('emerging_fit_score')} conf={data.get('confidence')} tokens={data['_tokens']}")
     return data
 
 def build_scored_df(df, results):
@@ -222,6 +272,7 @@ def build_scored_df(df, results):
             'Status':contact.get('Contact Status',''), 'Sector Fit':sf,
             'Rel Depth':rel, 'Halo':ha, 'Emerging Fit':em, 'Composite':composite,
             'Tier':classify_tier(composite), 'AUM':org_data.get('aum_estimate','Unknown'),
+            'Check Size':compute_check_size(org_data.get('aum_figure_millions'), contact.get('Org Type','')),
             'Confidence':org_data.get('confidence','LOW'), 'Is GP':org_data.get('is_gp_or_service_provider',False),
             'Why':org_data.get('sector_fit_reasoning',''), 'Halo Reasoning':org_data.get('halo_reasoning',''),
             'EM Reasoning':org_data.get('emerging_fit_reasoning',''), 'Org Summary':org_data.get('org_description',''),
@@ -229,6 +280,7 @@ def build_scored_df(df, results):
     return pd.DataFrame(rows).sort_values('Composite', ascending=False).reset_index(drop=True)
 
 def generate_draft(row, sender_name, sender_title, tone):
+    logger.info(f"Drafting email: {row['Organization']} (status={row.get('Status','?')})")
     research_prompt = f"""Search for the most recent publicly available activities from {row['Organization']} relevant to:
   - Private credit or alternative investment allocations
   - ESG, impact investing, or sustainability commitments
@@ -247,6 +299,41 @@ If the most relevant information is older than 18 months, include it anyway — 
 
     status   = row.get('Status', 'New Contact')
     guidance = STATUS_GUIDANCE.get(status, STATUS_GUIDANCE["New Contact"])
+
+    check_size = row.get('Check Size')
+    if check_size:
+        aum_val = float(str(check_size).replace('$','').replace('M','').replace('B','').split('–')[0].strip()) if check_size else 0
+        raw = check_size.split('–')
+        try:
+            hi_str = raw[1].strip() if len(raw) > 1 else raw[0].strip()
+            hi_val = float(hi_str.replace('$','').replace('M','').replace('B','').replace('K',''))
+            hi_unit = 'B' if 'B' in hi_str else ('K' if 'K' in hi_str else 'M')
+            hi_millions = hi_val * 1000 if hi_unit == 'B' else (hi_val / 1000 if hi_unit == 'K' else hi_val)
+        except Exception:
+            hi_millions = 0
+
+        if hi_millions >= 50:
+            check_size_guidance = f"""
+CHECK SIZE CONTEXT: Estimated commitment range is {check_size} — this is a large-check prospect.
+  - Do NOT lead with fund economics or check size
+  - They have a full due diligence team and will move on their own timeline
+  - Focus on relationship and strategic fit, not urgency
+  - Tone should be deferential and patient"""
+        elif hi_millions >= 5:
+            check_size_guidance = f"""
+CHECK SIZE CONTEXT: Estimated commitment range is {check_size} — core target range for PaceZero Fund II.
+  - This is a strong fit on fund economics — be confident and direct
+  - Lead with value proposition and mandate alignment
+  - A clear ask for a call is appropriate"""
+        elif hi_millions > 0:
+            check_size_guidance = f"""
+CHECK SIZE CONTEXT: Estimated commitment range is {check_size} — smaller than typical target but potentially valuable for halo and network effects.
+  - Do not lead with fund economics
+  - Emphasize strategic fit and long-term relationship over immediate commitment size"""
+        else:
+            check_size_guidance = ""
+    else:
+        check_size_guidance = ""
     draft_prompt = f"""You are a pitch person and fundraising analyst at PaceZero Capital Partners,
 a Toronto-based sustainability-focused private credit firm raising Fund II.
 PaceZero focus areas: Agriculture & Ecosystems, Energy Transition, Health & Education.
@@ -254,6 +341,7 @@ Deal size: $3M to $20M. Emerging manager, Fund II.
 
 CONTACT STATUS: {status}
 {guidance}
+{check_size_guidance}
 TONE: {tone}
 
 PROSPECT:
@@ -283,6 +371,7 @@ No preamble, no commentary, no labels."""
     d_tok = r2.usage.total_tokens
     total_tok = r_tok + d_tok
     cost = (total_tok / 1_000_000) * 12.50
+    logger.info(f"  Draft complete: {row['Organization']} — tokens={total_tok} cost=${cost:.4f}")
     return draft, recent_activity, total_tok, cost
 
 def gmail_link(draft):
@@ -290,6 +379,7 @@ def gmail_link(draft):
     subject = lines[0].replace("Subject:", "").strip() if lines else "Introduction — PaceZero Capital Partners"
     body    = lines[1].strip() if len(lines) > 1 else draft
     return f"https://mail.google.com/mail/?view=cm&fs=1&su={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
+
 
 DEMO_LIMIT_NOTE = """
 <div style='margin-top:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;font-size:12px;color:#92400e;line-height:1.6;'>
@@ -359,6 +449,7 @@ with st.expander("Quick Score — score a single org manually"):
     if st.button("Score This Org", key="manual_score_btn") and manual_org:
         with st.spinner(f"Scoring {manual_org}..."):
             try:
+                logger.info(f"Quick score: {manual_org} ({manual_org_type})")
                 data      = score_org(manual_org, manual_org_type, manual_role or "Unknown")
                 sf        = data.get('sector_fit_score', 5)
                 ha        = data.get('halo_score', 5)
@@ -405,14 +496,27 @@ if uploaded_file:
     c2.metric("Unique Orgs",    df['Organization'].nunique())
 
     if st.button("Run Full Pipeline", type="primary"):
-        results = []
+        # Seed results from cache to avoid re-scoring already known orgs
+        cached = st.session_state.get('results', [])
+        cached_orgs = {r['org_name'] for r in cached}
+        results  = list(cached)
+
         unique_orgs = df.groupby('Organization').first().reset_index()
-        total       = len(unique_orgs)
-        progress    = st.progress(0)
-        status_msg  = st.empty()
+        to_score    = unique_orgs[~unique_orgs['Organization'].isin(cached_orgs)]
+        total       = len(to_score)
+        skipped     = len(unique_orgs) - total
+
+        if skipped:
+            st.info(f"{skipped} org(s) loaded from cache — skipping re-score.")
+            logger.info(f"Pipeline started: {total} to score, {skipped} served from cache")
+        else:
+            logger.info(f"Pipeline started: {total} orgs to score")
+
+        progress   = st.progress(0)
+        status_msg = st.empty()
         total_in = total_out = 0
 
-        for i, (_, row) in enumerate(unique_orgs.iterrows()):
+        for i, (_, row) in enumerate(to_score.iterrows()):
             org_name = row['Organization']
             status_msg.caption(f"Scoring {i+1}/{total} — {org_name}")
             try:
@@ -423,17 +527,20 @@ if uploaded_file:
                 total_in  += data.get('_input_tokens', 0)
                 total_out += data.get('_output_tokens', 0)
             except Exception as e:
+                logger.error(f"Failed to score {org_name}: {e}")
                 st.warning(f"Failed: {org_name} — {e}")
-            progress.progress((i+1)/total)
+            progress.progress((i+1)/total if total else 1)
             time.sleep(0.5)
 
         scored_df = build_scored_df(df, results)
         cost      = (total_in/1000*0.0025) + (total_out/1000*0.0100)
-        status_msg.caption("Pipeline complete")
+        logger.info(f"Pipeline complete: {len(results)} orgs total — tokens={total_in+total_out} cost=${cost:.4f}")
+        status_msg.caption(f"Pipeline complete — {total} scored, {skipped} from cache")
         st.session_state['scored_df'] = scored_df
         st.session_state['results']   = results
-        st.session_state['cost']      = cost
-        st.session_state['tokens']    = total_in + total_out
+        st.session_state['cost']      = st.session_state.get('cost', 0) + cost
+        st.session_state['tokens']    = st.session_state.get('tokens', 0) + (total_in + total_out)
+
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -460,158 +567,7 @@ if page == "📊 Report":
         c4.metric("Avg Composite",   round(scored_df['Composite'].mean(), 2))
         c5.metric("Run Cost",        f"${cost:.4f}")
 
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#065f46;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:16px;'>Priority Close — Action Required This Week</div>", unsafe_allow_html=True)
 
-        priority = scored_df[scored_df['Tier'] == 'PRIORITY CLOSE']
-        if len(priority):
-            for _, row in priority.iterrows():
-                with st.expander(f"{row['Organization']}   ·   Score {row['Composite']}   ·   {row['AUM']}"):
-                    d1, d2 = st.columns(2)
-                    with d1:
-                        st.markdown(f"**Contact:** {row['Contact Name']}")
-                        st.markdown(f"**Type:** {row['Type']}")
-                        st.markdown(f"**Status:** {row['Status']}")
-                        st.markdown(f"**Confidence:** {row['Confidence']}")
-                    with d2:
-                        s1, s2 = st.columns(2)
-                        s1.metric("Composite",  row['Composite'])
-                        s2.metric("Sector Fit", row['Sector Fit'])
-                        s3, s4 = st.columns(2)
-                        s3.metric("Halo",         row['Halo'])
-                        s4.metric("Emerging Fit", row['Emerging Fit'])
-                    st.info(row['Why'])
-        else:
-            st.info("No Priority Close prospects in this run.")
-
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#1e40af;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;'>Strong Fit Pipeline</div>", unsafe_allow_html=True)
-        strong = scored_df[scored_df['Tier'] == 'STRONG FIT'][['Contact Name','Organization','Type','Composite','AUM','Confidence']]
-        st.dataframe(strong, use_container_width=True, hide_index=True)
-
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;'>Pipeline Tier Breakdown</div>", unsafe_allow_html=True)
-        tier_order = ['PRIORITY CLOSE','STRONG FIT','MODERATE FIT','WEAK FIT']
-        st.bar_chart(pd.DataFrame({'Tier':tier_order,'Count':[tier_counts.get(t,0) for t in tier_order]}).set_index('Tier'))
-
-        # Analyst Section
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown('<div class="section-header">Analyst View</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-sub">Full pipeline with filters, scoring breakdown, and prospect deep dive</div>', unsafe_allow_html=True)
-
-        fc1, fc2, fc3, fc4 = st.columns(4)
-        tier_filter = fc1.multiselect("Tier", ['PRIORITY CLOSE','STRONG FIT','MODERATE FIT','WEAK FIT'], default=['PRIORITY CLOSE','STRONG FIT','MODERATE FIT','WEAK FIT'])
-        type_filter = fc2.multiselect("Org Type", sorted(scored_df['Type'].unique()), default=list(scored_df['Type'].unique()))
-        conf_filter = fc3.multiselect("Confidence", ['HIGH','MEDIUM','LOW'], default=['HIGH','MEDIUM','LOW'])
-        hide_gp     = fc4.checkbox("Hide GPs", value=True)
-
-        filtered_df = scored_df[
-            scored_df['Tier'].isin(tier_filter) &
-            scored_df['Type'].isin(type_filter) &
-            scored_df['Confidence'].isin(conf_filter)
-        ]
-        if hide_gp:
-            filtered_df = filtered_df[filtered_df['Is GP'] == False]
-
-        st.caption(f"{len(filtered_df)} prospects shown")
-
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Showing",        len(filtered_df))
-        k2.metric("Priority Close", len(filtered_df[filtered_df['Tier']=='PRIORITY CLOSE']))
-        k3.metric("Strong Fit",     len(filtered_df[filtered_df['Tier']=='STRONG FIT']))
-        k4.metric("Avg Composite",  round(filtered_df['Composite'].mean(),2) if len(filtered_df) else 0)
-
-        st.markdown("<hr>", unsafe_allow_html=True)
-        display_cols = ['Contact Name','Organization','Type','Region','Sector Fit','Rel Depth','Halo','Emerging Fit','Composite','Tier','AUM','Confidence']
-        st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True)
-
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Score Distribution</div>", unsafe_allow_html=True)
-        full_index = pd.RangeIndex(1, 11)
-        dc1, dc2, dc3 = st.columns(3)
-        sf_counts = filtered_df['Sector Fit'].value_counts().reindex(full_index, fill_value=0).reset_index()
-        sf_counts.columns = ['Score','Count']
-        dc1.markdown("**D1 — Sector & Mandate Fit**")
-        dc1.bar_chart(sf_counts.set_index('Score'))
-        halo_counts = filtered_df['Halo'].value_counts().reindex(full_index, fill_value=0).reset_index()
-        halo_counts.columns = ['Score','Count']
-        dc2.markdown("**D3 — Halo & Strategic Value**")
-        dc2.bar_chart(halo_counts.set_index('Score'))
-        em_counts = filtered_df['Emerging Fit'].value_counts().reindex(full_index, fill_value=0).reset_index()
-        em_counts.columns = ['Score','Count']
-        dc3.markdown("**D4 — Emerging Manager Fit**")
-        dc3.bar_chart(em_counts.set_index('Score'))
-
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Prospect Deep Dive</div>", unsafe_allow_html=True)
-        selected_org = st.selectbox("Select an organization", options=filtered_df['Organization'].tolist())
-        if selected_org:
-            row = filtered_df[filtered_df['Organization'] == selected_org].iloc[0]
-            st.markdown(f"""
-            <div style='margin-bottom:12px;'>
-                <span style='font-family:Playfair Display,serif;font-size:22px;font-weight:700;color:#1a1a2e;'>{row['Organization']}</span>
-                &nbsp;&nbsp;{tier_badge(row['Tier'])}&nbsp;&nbsp;{conf_badge(row['Confidence'])}
-                {'&nbsp;&nbsp;<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:10px;font-size:10px;font-family:DM Mono,monospace;">GP FLAG</span>' if row['Is GP'] else ''}
-            </div>
-            <div style='font-size:13px;color:#6b7280;margin-bottom:20px;'>{row['Org Summary']}</div>
-            """, unsafe_allow_html=True)
-            d1, d2 = st.columns(2)
-            with d1:
-                st.markdown(f"**Contact:** {row['Contact Name']}")
-                st.markdown(f"**Type:** {row['Type']}")
-                st.markdown(f"**Region:** {row['Region']}")
-                st.markdown(f"**Status:** {row['Status']}")
-                st.markdown(f"**AUM:** {row['AUM']}")
-            with d2:
-                st.metric("Composite Score", row['Composite'])
-                s1, s2 = st.columns(2)
-                s1.metric("Sector Fit (D1)", row['Sector Fit'])
-                s2.metric("Rel Depth (D2)",  row['Rel Depth'])
-                s3, s4 = st.columns(2)
-                s3.metric("Halo (D3)",          row['Halo'])
-                s4.metric("Emerging Fit (D4)",  row['Emerging Fit'])
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.info(f"**Sector Fit:** {row['Why']}")
-            st.info(f"**Halo:** {row['Halo Reasoning']}")
-            st.info(f"**Emerging Fit:** {row['EM Reasoning']}")
-
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.download_button("Download Scored Results as CSV", data=scored_df.to_csv(index=False), file_name="pacezero_scored_pipeline.csv", mime="text/csv")
-
-
-# ════════════════════════════════════════
-# PAGE: COST & TOKENS
-# ════════════════════════════════════════
-elif page == "💰 Cost & Tokens":
-    st.markdown('<div class="section-header">Cost & Token Usage</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-sub">API usage breakdown and scaling projections</div>', unsafe_allow_html=True)
-
-    if 'scored_df' not in st.session_state:
-        st.info("Run the pipeline above to see cost data.")
-    else:
-        cost    = st.session_state['cost']
-        tokens  = st.session_state['tokens']
-        results = st.session_state['results']
-        n_orgs  = len(results)
-
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Total Tokens",  f"{tokens:,}")
-        r2.metric("Total Cost",    f"${cost:.4f}")
-        r3.metric("Orgs Scored",   n_orgs)
-        r4.metric("Cost per Org",  f"${cost/max(n_orgs,1):.4f}")
-
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Scaling Projection</div>", unsafe_allow_html=True)
-        cost_per_org = cost / max(n_orgs, 1)
-        scale_df = pd.DataFrame({
-            'Prospects':       [100, 500, 1000, 5000, 10000],
-            'Est. Total Cost': [f"${cost_per_org*n:.2f}" for n in [100,500,1000,5000,10000]],
-            'Cost per Org':    [f"${cost_per_org:.4f}"]*5,
-        })
-        st.table(scale_df)
-
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Token Breakdown by Org</div>", unsafe_allow_html=True)
         token_rows = [{
             'Organization':  r.get('org_name',''),
             'Input Tokens':  r.get('_input_tokens',0),
@@ -620,6 +576,16 @@ elif page == "💰 Cost & Tokens":
             'Cost':          f"${(r.get('_input_tokens',0)/1000*0.0025)+(r.get('_output_tokens',0)/1000*0.0100):.4f}",
         } for r in results]
         st.dataframe(pd.DataFrame(token_rows).sort_values('Total Tokens', ascending=False), use_container_width=True, hide_index=True)
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Pipeline Log</div>", unsafe_allow_html=True)
+        if os.path.exists(LOG_FILE):
+            with open(LOG_FILE) as lf:
+                log_lines = lf.readlines()
+            st.text_area("", value="".join(log_lines[-100:]), height=300, key="log_viewer")
+            st.caption(f"Showing last {min(100, len(log_lines))} of {len(log_lines)} log lines — full log: {LOG_FILE}")
+        else:
+            st.info("No log file yet — run the pipeline to generate logs.")
 
 
 # ════════════════════════════════════════
