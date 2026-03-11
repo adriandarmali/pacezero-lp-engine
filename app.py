@@ -484,7 +484,7 @@ if 'scored_df' in st.session_state:
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;'>Pipeline Tier Breakdown</div>", unsafe_allow_html=True)
-        tier_order = ['PRIORITY CLOSE','STRONG FIT','MODERATE FIT','WEAK FIT']
+        tier_order = ['WEAK FIT','MODERATE FIT','STRONG FIT','PRIORITY CLOSE']
         st.bar_chart(pd.DataFrame({'Tier':tier_order,'Count':[tier_counts.get(t,0) for t in tier_order]}).set_index('Tier'))
 
     # ── ANALYST ──
