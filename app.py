@@ -153,79 +153,40 @@ ORGANIZATION:
   Type   : {org_type}
   Contact: {role}
 
-PRE-SEARCH RULE — ABBREVIATIONS:
-  If the org name looks like an abbreviation (all caps, no spaces),
-  search for the full name first before scoring.
-  Example: "PBUCC" → search "PBUCC pension" to find full name before researching.
-
 CRITICAL RULE — LP vs GP DISTINCTION:
-  LP = allocates capital INTO externally managed funds → score normally
-  GP = PRIMARILY manages funds for others / originates loans / brokers deals → apply caps
+  LP = allocates capital INTO externally managed funds
+  GP = PRIMARILY manages funds for others / originates loans / brokers deals
+  Only mark as GP if PURELY a service provider with no external fund allocations.
 
-  If an org allocates to external managers even partially, treat as LP.
-  Only mark is_gp_or_service_provider = true if the org is PURELY a:
-    - Real estate broker or advisory firm
-    - Loan originator with no external fund allocations
-    - Pure investment bank or placement agent
-    - Pure service provider with no investing activity
+  Examples of LPs: Neuberger Berman, Lincoln Financial, Bessemer Trust, BBH, Ludwig Institute
+  Examples of GPs: Meridian Capital Group (CRE brokerage), Gratitude Railroad (asset manager)
 
-  Examples of LPs (do NOT flag as GP):
-    - Neuberger Berman              → asset manager that allocates to external funds
-    - Lincoln Financial             → insurance company with large LP allocation programme
-    - Bessemer Trust                → MFO that allocates to external managers
-    - Brown Brothers Harriman       → private bank with LP allocation activity
-    - Ludwig Institute for Cancer Research → medical foundation with investment office
-    - Safra Group                   → private banking group with external allocations
-
-  Examples of true GPs/service providers (flag as GP):
-    - Meridian Capital Group        → pure CRE brokerage, no external fund allocations
-    - Gratitude Railroad            → impact asset manager, manages funds for others
-    - A placement agent or fundraising consultant
-    - A company that only originates and holds loans
-
-  GP hard caps (only apply if PURELY a GP/service provider):
-    sector_fit <= 2, emerging_fit <= 2, halo <= 3
+  GP hard caps: sector_fit <= 2, emerging_fit <= 2, halo <= 3
 
 RUBRIC 1 — SECTOR & MANDATE FIT (1-10):
   9-10 : Private credit allocation + sustainability/ESG mandate (BOTH confirmed)
   7-8  : One confirmed strongly, other strongly implied
   5-6  : LP with alternatives exposure but weak ESG, OR strong ESG but no credit signal
   3-4  : LP confirmed but no alignment signals found
-  1-2  : Purely a GP / broker / lender / service provider
+  1-2  : GP / broker / lender / service provider
 
 RUBRIC 2 — HALO & STRATEGIC VALUE (1-10):
-  9-10 : Globally recognized — major university endowment or globally known
-         private foundation tier
-  7-8  : Well-known specifically in impact/sustainability LP circles
-  5-6  : Respected regionally or within a niche; some public presence
-  3-4  : Limited public presence; small or private institution
-  1-2  : Unknown, purely private, no meaningful public footprint
-
-  SFO GUIDANCE:
-    Most SFOs score 3-4 (private, limited public presence)
-    Exception: score 6-7 if explicitly tied to a famous family or billionaire
-               AND manages $1B+ (e.g. Bloomberg Family Office)
-    Never score an SFO above 7 unless globally famous at institutional level
-
-  GP/service provider hard cap: halo <= 3
+  9-10 : Globally recognized institution
+  7-8  : Well-known in impact/sustainability LP circles
+  5-6  : Respected regionally or within a niche
+  3-4  : Limited public presence
+  1-2  : Unknown or reputation-neutral
+  SFOs: max 7 unless globally famous billionaire family with $1B+ AUM
 
 RUBRIC 3 — EMERGING MANAGER FIT (1-10):
-  9-10 : Documented emerging manager programme; has backed Fund I/II on record
-  7-8  : Strong structural appetite: SFO, Foundation, faith-based pension,
-         or smaller endowment with open mandate and no evidence of restrictions;
-         OR known first-time fund backer
-  5-6  : Mid-size MFO or FoF with no explicit programme but typically flexible
-  3-4  : Large institutional allocator ($10B+ AUM); likely prefers established managers
-  1-2  : Known policy against emerging managers OR purely a GP/service provider
+  9-10 : Documented emerging manager programme; backed Fund I/II before
+  7-8  : Flexible smaller institution; SFOs and small MFOs with open mandate
+  5-6  : No explicit programme but org type typically flexible
+  3-4  : Large institution; likely prefers established managers
+  1-2  : Known policy against emerging managers OR confirmed GP
+  Do NOT default to 4-5. SFOs and small MFOs should score 6-7 unless restricted.
 
-  Do NOT default to 4-5 when data is thin. Actively look for evidence
-  in both directions. If no restrictions are found, score based on
-  org type using the bands above.
-  Absence of information is NOT evidence of restrictions.
-  GP/service provider hard cap: emerging_fit <= 2
-
-Respond ONLY with valid JSON. No preamble, no markdown, no extra text.
-
+Respond ONLY with valid JSON:
 {{
   "org_name": "{org_name}",
   "org_description": "<2 sentence factual summary>",
@@ -323,7 +284,7 @@ with st.sidebar:
 # ════════════════════════════════════════
 st.markdown("""
 <div style='padding:28px 0 8px 0;'>
-    <div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:8px;'>PaceZero Capital Partners</div>
+    <div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:8px;'>PaceZero Capital Partners — Fund II</div>
     <div style='font-family:Playfair Display,serif;font-size:38px;font-weight:700;color:#1a1a2e;line-height:1.2;'>LP Prospect Scoring Engine</div>
     <div style='font-size:15px;color:#6b7280;margin-top:8px;'>AI-powered enrichment and scoring for your fundraising pipeline</div>
 </div>
@@ -428,11 +389,13 @@ if uploaded_file:
     df = df.dropna(subset=['Contact Name','Organization'])
     df['Organization']       = df['Organization'].str.strip()
     df['Relationship Depth'] = pd.to_numeric(df['Relationship Depth'], errors='coerce').fillna(5)
-    train_df = df.copy()
+    test_mask = df['Organization'].isin(TEST_ORGS)
+    train_df  = df[~test_mask].copy()
 
-    c1, c2 = st.columns(2)
-    c1.metric("Total Contacts", len(df))
-    c2.metric("Unique Orgs",    train_df['Organization'].nunique())
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Contacts",  len(df))
+    c2.metric("Unique Orgs",     train_df['Organization'].nunique())
+    c3.metric("Held Out (Test)", int(test_mask.sum()))
 
     if st.button("Run Full Pipeline", type="primary"):
         results  = []
@@ -521,7 +484,7 @@ if 'scored_df' in st.session_state:
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;'>Pipeline Tier Breakdown</div>", unsafe_allow_html=True)
-        tier_order = ['WEAK FIT','MODERATE FIT','STRONG FIT','PRIORITY CLOSE']
+        tier_order = ['PRIORITY CLOSE','STRONG FIT','MODERATE FIT','WEAK FIT']
         st.bar_chart(pd.DataFrame({'Tier':tier_order,'Count':[tier_counts.get(t,0) for t in tier_order]}).set_index('Tier'))
 
     # ── ANALYST ──
@@ -615,6 +578,184 @@ if 'scored_df' in st.session_state:
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>API Cost Tracker</div>", unsafe_allow_html=True)
         cost_per_org = cost / max(len(st.session_state['results']), 1)
         st.table(pd.DataFrame({'Prospects':[100,500,1000,5000],'Est. Cost':[f"${cost_per_org*n:.2f}" for n in [100,500,1000,5000]]}))
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;'>Outreach Draft Generator</div>", unsafe_allow_html=True)
+        st.caption("Researches the org's most recent activity, then drafts a personalized first-touch email.")
+
+        outreach_org = st.selectbox(
+            "Select a prospect",
+            options=filtered_df['Organization'].tolist(),
+            key="outreach_org"
+        )
+
+        if outreach_org:
+            outreach_row = filtered_df[filtered_df['Organization'] == outreach_org].iloc[0]
+
+            oc1, oc2 = st.columns(2)
+            with oc1:
+                sender_name  = st.text_input("Your name", placeholder="e.g. Adrian Darmali", key="sender_name")
+                sender_title = st.text_input("Your title", placeholder="e.g. Analyst, PaceZero Capital Partners", key="sender_title")
+            with oc2:
+                tone = st.selectbox("Tone", ["Professional", "Warm and conversational", "Direct and concise"], key="outreach_tone")
+
+            generate_outreach = st.button("Generate Outreach Draft", type="primary", key="generate_outreach")
+
+            if generate_outreach:
+
+                # ── CALL 1: Research recent activity ──
+                research_status = st.empty()
+                research_status.caption("Step 1 of 2 — Researching recent activity...")
+
+                try:
+                    research_prompt = f"""
+Search for the most recent publicly available activities, announcements,
+or initiatives from {outreach_org} that are relevant to any of the following:
+
+  - Private credit or alternative investment allocations
+  - ESG, impact investing, or sustainability commitments
+  - Emerging manager programmes or first-time fund commitments
+  - New hires or leadership changes in their investment office
+  - Published reports, conference appearances, or media coverage
+  - Any recent statements on their investment mandate or strategy
+
+Return 2-3 specific findings with dates where available.
+Focus only on activities from the last 12-18 months.
+Be specific — name the initiative, report, or event.
+If nothing recent is found, say so clearly in one sentence.
+"""
+                    research_response = client.chat.completions.create(
+                        model=MODEL,
+                        messages=[{"role": "user", "content": research_prompt}],
+                        max_tokens=300,
+                    )
+                    recent_activity = research_response.choices[0].message.content.strip()
+                    r_in  = research_response.usage.prompt_tokens
+                    r_out = research_response.usage.completion_tokens
+
+                except Exception as e:
+                    recent_activity = "No recent activity found."
+                    r_in = r_out = 0
+
+                # ── CALL 2: Draft the email ──
+                research_status.caption("Step 2 of 2 — Drafting outreach email...")
+
+                try:
+                    status = outreach_row.get('Status', 'New Contact')
+
+                    status_guidance = {
+                        "New Contact": """
+EMAIL GOAL: First-time acquisition. They have never heard of PaceZero.
+  - Lead with the recent activity hook to show you did your homework
+  - Clearly explain what PaceZero does and why it is relevant to their mandate
+  - Be confident and specific — this is a sell
+  - Ask for a 20-minute introductory call
+  - Under 150 words
+""",
+                        "Previously Contacted": """
+EMAIL GOAL: Re-engagement. They have been contacted before but did not respond or convert.
+  - Acknowledge the prior outreach briefly and naturally — do not grovel
+  - Lead with something new: the recent activity hook or a fund update
+  - Give them a reason this moment is the right time to reconnect
+  - Soft ask for a call — keep the pressure low
+  - Under 130 words
+""",
+                        "Existing Contact": """
+EMAIL GOAL: Relationship maintenance. They already know PaceZero.
+  - Skip the introduction — they know who you are
+  - Open with the recent activity to show you are following their work
+  - Frame the email as a check-in or sharing a relevant update, not a pitch
+  - No hard sell — the goal is to stay warm and top of mind
+  - Ask if they have 15 minutes to catch up
+  - Under 120 words
+""",
+                        "In Diligence": """
+EMAIL GOAL: Support and momentum. They are actively evaluating PaceZero.
+  - Acknowledge that they are in the process without being pushy
+  - Reference something from their recent activity that reinforces the fit
+  - Offer to answer any specific questions or provide additional materials
+  - Keep it supportive and confidence-building — not sales-y
+  - Under 120 words
+""",
+                        "Committed": """
+EMAIL GOAL: Relationship nurture. They have already committed to the fund.
+  - Warm, personal tone — they are a partner now, not a prospect
+  - Reference their recent activity as a shared interest or alignment signal
+  - Share a brief fund update or milestone if relevant
+  - No ask needed — just keep the relationship warm
+  - Under 100 words
+""",
+                        "Passed": """
+EMAIL GOAL: Keep the door open. They previously declined or passed.
+  - Do not reference the pass directly
+  - Lead with the recent activity hook — show circumstances may have changed
+  - Very light touch — one paragraph, no hard sell
+  - Leave the door open for a future conversation without pressure
+  - Under 100 words
+""",
+                    }
+
+                    guidance = status_guidance.get(status, status_guidance["New Contact"])
+
+                    draft_prompt = f"""
+You are a pitch person and fundraising analyst at PaceZero Capital Partners,
+a Toronto-based sustainability-focused private credit firm raising Fund II.
+
+PaceZero focus areas: Agriculture & Ecosystems, Energy Transition, Health & Education.
+Deal size: $3M to $20M. Emerging manager, Fund II.
+
+CONTACT STATUS: {status}
+
+{guidance}
+
+TONE: {tone}
+
+PROSPECT:
+  Organization : {outreach_row['Organization']}
+  Contact Name : {outreach_row['Contact Name']}
+  Org Type     : {outreach_row['Type']}
+  AUM          : {outreach_row['AUM']}
+  Tier         : {outreach_row['Tier']} (composite score {outreach_row['Composite']} / 10)
+
+SCORING CONTEXT (use this to personalize — do not quote scores in the email):
+  Sector alignment : {outreach_row['Why']}
+  Halo context     : {outreach_row['Halo Reasoning']}
+  Emerging fit     : {outreach_row['EM Reasoning']}
+  Org summary      : {outreach_row['Org Summary']}
+
+RECENT ACTIVITY (use the most relevant finding as your opening hook):
+{recent_activity}
+
+SENDER:
+  Name  : {sender_name or '[Your Name]'}
+  Title : {sender_title or '[Your Title]'}
+
+Return ONLY the email. Subject line first, then a blank line, then the body.
+No preamble, no commentary, no labels.
+"""
+                    draft_response = client.chat.completions.create(
+                        model=MODEL,
+                        messages=[{"role": "user", "content": draft_prompt}],
+                        max_tokens=400,
+                    )
+
+                    draft    = draft_response.choices[0].message.content.strip()
+                    d_in     = draft_response.usage.prompt_tokens
+                    d_out    = draft_response.usage.completion_tokens
+                    total_cost = ((r_in + d_in) / 1000 * 0.0025) + ((r_out + d_out) / 1000 * 0.0100)
+
+                    research_status.empty()
+
+                    st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;margin-top:16px;'>Recent Activity Found</div>", unsafe_allow_html=True)
+                    st.info(recent_activity)
+
+                    st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;margin-top:16px;'>Generated Draft</div>", unsafe_allow_html=True)
+                    st.text_area("", value=draft, height=300, key="draft_output")
+                    st.caption(f"2 API calls  |  Tokens: {r_in + r_out + d_in + d_out:,}  |  Cost: ${total_cost:.4f}")
+
+                except Exception as e:
+                    research_status.empty()
+                    st.error(f"Draft generation failed: {e}")
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.download_button(label="Download Scored Results as CSV", data=scored_df.to_csv(index=False), file_name="pacezero_scored_pipeline.csv", mime="text/csv")
