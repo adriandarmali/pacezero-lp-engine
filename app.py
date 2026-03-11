@@ -569,7 +569,164 @@ if page == "📊 Report":
         c4.metric("Avg Composite",   round(scored_df['Composite'].mean(), 2))
         c5.metric("Run Cost",        f"${cost:.4f}")
 
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#065f46;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:16px;'>Priority Close — Action Required This Week</div>", unsafe_allow_html=True)
 
+        priority = scored_df[scored_df['Tier'] == 'PRIORITY CLOSE']
+        if len(priority):
+            for _, row in priority.iterrows():
+                with st.expander(f"{row['Organization']}   ·   Score {row['Composite']}   ·   {row['AUM']}"):
+                    d1, d2 = st.columns(2)
+                    with d1:
+                        st.markdown(f"**Contact:** {row['Contact Name']}")
+                        st.markdown(f"**Type:** {row['Type']}")
+                        st.markdown(f"**Status:** {row['Status']}")
+                        st.markdown(f"**AUM:** {row['AUM']}")
+                        st.markdown(f"**Est. Check Size:** {row['Check Size'] or 'Unknown'}")
+                        st.markdown(f"**Confidence:** {row['Confidence']}")
+                    with d2:
+                        s1, s2 = st.columns(2)
+                        s1.metric("Composite",  row['Composite'])
+                        s2.metric("Sector Fit", row['Sector Fit'])
+                        s3, s4 = st.columns(2)
+                        s3.metric("Halo",         row['Halo'])
+                        s4.metric("Emerging Fit", row['Emerging Fit'])
+                    st.info(row['Why'])
+        else:
+            st.info("No Priority Close prospects in this run.")
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#1e40af;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;'>Strong Fit Pipeline</div>", unsafe_allow_html=True)
+        strong = scored_df[scored_df['Tier'] == 'STRONG FIT'][['Contact Name','Organization','Type','Composite','AUM','Check Size','Confidence']]
+        st.dataframe(strong, use_container_width=True, hide_index=True)
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;'>Pipeline Tier Breakdown</div>", unsafe_allow_html=True)
+        tier_order = ['PRIORITY CLOSE','STRONG FIT','MODERATE FIT','WEAK FIT']
+        st.bar_chart(pd.DataFrame({'Tier':tier_order,'Count':[tier_counts.get(t,0) for t in tier_order]}).set_index('Tier'))
+
+        # Analyst Section
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown('<div class="section-header">Analyst View</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-sub">Full pipeline with filters, scoring breakdown, and prospect deep dive</div>', unsafe_allow_html=True)
+
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        tier_filter = fc1.multiselect("Tier", ['PRIORITY CLOSE','STRONG FIT','MODERATE FIT','WEAK FIT'], default=['PRIORITY CLOSE','STRONG FIT','MODERATE FIT','WEAK FIT'])
+        type_filter = fc2.multiselect("Org Type", sorted(scored_df['Type'].unique()), default=list(scored_df['Type'].unique()))
+        conf_filter = fc3.multiselect("Confidence", ['HIGH','MEDIUM','LOW'], default=['HIGH','MEDIUM','LOW'])
+        hide_gp     = fc4.checkbox("Hide GPs", value=True)
+
+        filtered_df = scored_df[
+            scored_df['Tier'].isin(tier_filter) &
+            scored_df['Type'].isin(type_filter) &
+            scored_df['Confidence'].isin(conf_filter)
+        ]
+        if hide_gp:
+            filtered_df = filtered_df[filtered_df['Is GP'] == False]
+
+        st.caption(f"{len(filtered_df)} prospects shown")
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Showing",        len(filtered_df))
+        k2.metric("Priority Close", len(filtered_df[filtered_df['Tier']=='PRIORITY CLOSE']))
+        k3.metric("Strong Fit",     len(filtered_df[filtered_df['Tier']=='STRONG FIT']))
+        k4.metric("Avg Composite",  round(filtered_df['Composite'].mean(),2) if len(filtered_df) else 0)
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        display_cols = ['Contact Name','Organization','Type','Region','Sector Fit','Rel Depth','Halo','Emerging Fit','Composite','Tier','AUM','Check Size','Confidence']
+        st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True)
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Score Distribution</div>", unsafe_allow_html=True)
+        full_index = pd.RangeIndex(1, 11)
+        dc1, dc2, dc3 = st.columns(3)
+
+        sf_counts = filtered_df['Sector Fit'].value_counts().reindex(full_index, fill_value=0).reset_index()
+        sf_counts.columns = ['Score','Count']
+        dc1.markdown("**D1 — Sector & Mandate Fit**")
+        dc1.bar_chart(sf_counts.set_index('Score'))
+
+        halo_counts = filtered_df['Halo'].value_counts().reindex(full_index, fill_value=0).reset_index()
+        halo_counts.columns = ['Score','Count']
+        dc2.markdown("**D3 — Halo & Strategic Value**")
+        dc2.bar_chart(halo_counts.set_index('Score'))
+
+        em_counts = filtered_df['Emerging Fit'].value_counts().reindex(full_index, fill_value=0).reset_index()
+        em_counts.columns = ['Score','Count']
+        dc3.markdown("**D4 — Emerging Manager Fit**")
+        dc3.bar_chart(em_counts.set_index('Score'))
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Prospect Deep Dive</div>", unsafe_allow_html=True)
+        selected_org = st.selectbox("Select an organization", options=filtered_df['Organization'].tolist())
+        if selected_org:
+            row = filtered_df[filtered_df['Organization'] == selected_org].iloc[0]
+            st.markdown(f"""
+            <div style='margin-bottom:12px;'>
+                <span style='font-family:Playfair Display,serif;font-size:22px;font-weight:700;color:#1a1a2e;'>{row['Organization']}</span>
+                &nbsp;&nbsp;{tier_badge(row['Tier'])}&nbsp;&nbsp;{conf_badge(row['Confidence'])}
+                {'&nbsp;&nbsp;<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:10px;font-size:10px;font-family:DM Mono,monospace;">GP FLAG</span>' if row['Is GP'] else ''}
+            </div>
+            <div style='font-size:13px;color:#6b7280;margin-bottom:20px;'>{row['Org Summary']}</div>
+            """, unsafe_allow_html=True)
+            d1, d2 = st.columns(2)
+            with d1:
+                st.markdown(f"**Contact:** {row['Contact Name']}")
+                st.markdown(f"**Type:** {row['Type']}")
+                st.markdown(f"**Region:** {row['Region']}")
+                st.markdown(f"**Status:** {row['Status']}")
+                st.markdown(f"**AUM:** {row['AUM']}")
+                st.markdown(f"**Est. Check Size:** {row['Check Size'] or 'Unknown — AUM not found'}")
+            with d2:
+                st.metric("Composite Score", row['Composite'])
+                s1, s2 = st.columns(2)
+                s1.metric("Sector Fit (D1)", row['Sector Fit'])
+                s2.metric("Rel Depth (D2)",  row['Rel Depth'])
+                s3, s4 = st.columns(2)
+                s3.metric("Halo (D3)",          row['Halo'])
+                s4.metric("Emerging Fit (D4)",  row['Emerging Fit'])
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.info(f"**Sector Fit:** {row['Why']}")
+            st.info(f"**Halo:** {row['Halo Reasoning']}")
+            st.info(f"**Emerging Fit:** {row['EM Reasoning']}")
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.download_button("Download Scored Results as CSV", data=scored_df.to_csv(index=False), file_name="pacezero_scored_pipeline.csv", mime="text/csv")
+
+
+# ════════════════════════════════════════
+# PAGE: COST & TOKENS
+# ════════════════════════════════════════
+elif page == "💰 Cost & Tokens":
+    st.markdown('<div class="section-header">Cost & Token Usage</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">API usage breakdown and scaling projections</div>', unsafe_allow_html=True)
+
+    if 'scored_df' not in st.session_state:
+        st.info("Run the pipeline above to see cost data.")
+    else:
+        cost    = st.session_state['cost']
+        tokens  = st.session_state['tokens']
+        results = st.session_state['results']
+        n_orgs  = len(results)
+
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Total Tokens",  f"{tokens:,}")
+        r2.metric("Total Cost",    f"${cost:.4f}")
+        r3.metric("Orgs Scored",   n_orgs)
+        r4.metric("Cost per Org",  f"${cost/max(n_orgs,1):.4f}")
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Scaling Projection</div>", unsafe_allow_html=True)
+        cost_per_org = cost / max(n_orgs, 1)
+        scale_df = pd.DataFrame({
+            'Prospects':       [100, 500, 1000, 5000, 10000],
+            'Est. Total Cost': [f"${cost_per_org*n:.2f}" for n in [100,500,1000,5000,10000]],
+            'Cost per Org':    [f"${cost_per_org:.4f}"]*5,
+        })
+        st.table(scale_df)
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Token Breakdown by Org</div>", unsafe_allow_html=True)
         token_rows = [{
             'Organization':  r.get('org_name',''),
             'Input Tokens':  r.get('_input_tokens',0),
