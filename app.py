@@ -3,9 +3,9 @@ import pandas as pd
 import numpy as np
 import json
 import time
+import urllib.parse
 from openai import OpenAI
 
-# ── Page config ──
 st.set_page_config(
     page_title="PaceZero LP Scoring Engine",
     page_icon="pacezero_logo.png",
@@ -13,106 +13,45 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ── Custom CSS ──
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&family=Playfair+Display:wght@600;700&display=swap');
-
 html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-
 .stApp { background-color: #f8f9fa; color: #1a1a2e; }
-
-section[data-testid="stSidebar"] {
-    background-color: #1a1a2e;
-    border-right: 1px solid #2d2d44;
-}
+section[data-testid="stSidebar"] { background-color: #1a1a2e; border-right: 1px solid #2d2d44; }
 section[data-testid="stSidebar"] * { color: #e6edf3 !important; }
-
 header[data-testid="stHeader"] { background: #f8f9fa; border-bottom: 1px solid #e0e0e0; }
-
-[data-testid="metric-container"] {
-    background: #ffffff;
-    border: 1px solid #e0e4ec;
-    border-radius: 10px;
-    padding: 16px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-}
-[data-testid="metric-container"] label {
-    color: #6b7280 !important;
-    font-size: 11px !important;
-    letter-spacing: 0.08em !important;
-    text-transform: uppercase !important;
-    font-family: 'DM Mono', monospace !important;
-}
-[data-testid="metric-container"] [data-testid="stMetricValue"] {
-    color: #1a1a2e !important;
-    font-size: 26px !important;
-    font-weight: 700 !important;
-    font-family: 'Playfair Display', serif !important;
-}
-
-[data-testid="stDataFrame"] {
-    border: 1px solid #e0e4ec;
-    border-radius: 10px;
-    overflow: hidden;
-    background: #ffffff;
-}
-
-.stButton > button {
-    background: #1a1a2e;
-    color: #ffffff;
-    border: none;
-    border-radius: 8px;
-    font-family: 'DM Sans', sans-serif;
-    font-weight: 500;
-    padding: 10px 24px;
-    transition: all 0.2s;
-}
+[data-testid="metric-container"] { background: #ffffff; border: 1px solid #e0e4ec; border-radius: 10px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+[data-testid="metric-container"] label { color: #6b7280 !important; font-size: 11px !important; letter-spacing: 0.08em !important; text-transform: uppercase !important; font-family: 'DM Mono', monospace !important; }
+[data-testid="metric-container"] [data-testid="stMetricValue"] { color: #1a1a2e !important; font-size: 26px !important; font-weight: 700 !important; font-family: 'Playfair Display', serif !important; }
+[data-testid="stDataFrame"] { border: 1px solid #e0e4ec; border-radius: 10px; overflow: hidden; background: #ffffff; }
+.stButton > button { background: #1a1a2e; color: #ffffff; border: none; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-weight: 500; padding: 10px 24px; transition: all 0.2s; }
 .stButton > button:hover { background: #2d2d50; transform: translateY(-1px); }
-
-.streamlit-expanderHeader {
-    background: #ffffff !important;
-    border: 1px solid #e0e4ec !important;
-    border-radius: 8px !important;
-    color: #1a1a2e !important;
-    font-weight: 500 !important;
-}
-.streamlit-expanderContent {
-    background: #ffffff !important;
-    border: 1px solid #e0e4ec !important;
-    border-top: none !important;
-}
-
+.streamlit-expanderHeader { background: #ffffff !important; border: 1px solid #e0e4ec !important; border-radius: 8px !important; color: #1a1a2e !important; font-weight: 500 !important; }
+.streamlit-expanderContent { background: #ffffff !important; border: 1px solid #e0e4ec !important; border-top: none !important; }
 .stProgress > div > div { background-color: #1a1a2e; }
-
 hr { border-color: #e0e4ec; margin: 28px 0; }
-
 .stAlert { background: #ffffff; border: 1px solid #e0e4ec; border-radius: 8px; }
-
-.badge-priority { background:#d1fae5; color:#065f46; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; font-family:'DM Mono',monospace; letter-spacing:0.05em; }
-.badge-strong   { background:#dbeafe; color:#1e40af; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; font-family:'DM Mono',monospace; letter-spacing:0.05em; }
-.badge-moderate { background:#fef3c7; color:#92400e; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; font-family:'DM Mono',monospace; letter-spacing:0.05em; }
-.badge-weak     { background:#fee2e2; color:#991b1b; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; font-family:'DM Mono',monospace; letter-spacing:0.05em; }
+.badge-priority { background:#d1fae5; color:#065f46; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; font-family:'DM Mono',monospace; }
+.badge-strong   { background:#dbeafe; color:#1e40af; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; font-family:'DM Mono',monospace; }
+.badge-moderate { background:#fef3c7; color:#92400e; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; font-family:'DM Mono',monospace; }
+.badge-weak     { background:#fee2e2; color:#991b1b; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; font-family:'DM Mono',monospace; }
 .badge-high     { background:#d1fae5; color:#065f46; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600; font-family:'DM Mono',monospace; }
 .badge-medium   { background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600; font-family:'DM Mono',monospace; }
 .badge-low      { background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600; font-family:'DM Mono',monospace; }
-
 .section-header { font-family:'Playfair Display',serif; font-size:24px; font-weight:700; color:#1a1a2e; margin-bottom:4px; }
 .section-sub    { font-family:'DM Mono',monospace; font-size:11px; color:#6b7280; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:20px; }
-
-.term-card { background:#ffffff; border:1px solid #e0e4ec; border-left:3px solid #1a1a2e; border-radius:0 8px 8px 0; padding:14px 18px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.04); }
+.term-card { background:#ffffff; border:1px solid #e0e4ec; border-left:3px solid #1a1a2e; border-radius:0 8px 8px 0; padding:14px 18px; margin-bottom:10px; }
 .term-name { font-family:'DM Mono',monospace; font-size:13px; font-weight:500; color:#1a1a2e; margin-bottom:4px; }
 .term-def  { font-size:13px; color:#6b7280; line-height:1.6; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── API Setup ──
+# ── API & Constants ──
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 MODEL  = "gpt-4o"
-
 WEIGHTS = {'sector_fit':0.35,'relationship_depth':0.30,'halo_value':0.20,'emerging_fit':0.15}
 TIERS   = [(8.0,'PRIORITY CLOSE'),(6.5,'STRONG FIT'),(5.0,'MODERATE FIT'),(0.0,'WEAK FIT')]
-
 TEST_ORGS = ["PBUCC","Pension Boards United Church of Christ","Meridian Capital Group LLC","Inherent Group","The Rockefeller Foundation"]
 ORG_TYPES = ["Single Family Office","Multi-Family Office","Fund of Funds","Foundation","Endowment","Pension","Insurance","Asset Manager","RIA/FIA","HNWI","Private Capital Firm"]
 CONTACT_STATUSES = ["New Contact","Previously Contacted","Existing Contact","In Diligence","Committed","Passed"]
@@ -153,6 +92,10 @@ ORGANIZATION:
   Type   : {org_type}
   Contact: {role}
 
+PRE-SEARCH RULE — ABBREVIATIONS:
+  If the org name looks like an abbreviation (all caps, no spaces),
+  search for the full name first before scoring.
+
 CRITICAL RULE — LP vs GP DISTINCTION:
   LP = allocates capital INTO externally managed funds
   GP = PRIMARILY manages funds for others / originates loans / brokers deals
@@ -160,7 +103,6 @@ CRITICAL RULE — LP vs GP DISTINCTION:
 
   Examples of LPs: Neuberger Berman, Lincoln Financial, Bessemer Trust, BBH, Ludwig Institute
   Examples of GPs: Meridian Capital Group (CRE brokerage), Gratitude Railroad (asset manager)
-
   GP hard caps: sector_fit <= 2, emerging_fit <= 2, halo <= 3
 
 RUBRIC 1 — SECTOR & MANDATE FIT (1-10):
@@ -177,14 +119,19 @@ RUBRIC 2 — HALO & STRATEGIC VALUE (1-10):
   3-4  : Limited public presence
   1-2  : Unknown or reputation-neutral
   SFOs: max 7 unless globally famous billionaire family with $1B+ AUM
+  GP hard cap: halo <= 3
 
 RUBRIC 3 — EMERGING MANAGER FIT (1-10):
   9-10 : Documented emerging manager programme; backed Fund I/II before
-  7-8  : Flexible smaller institution; SFOs and small MFOs with open mandate
-  5-6  : No explicit programme but org type typically flexible
+  7-8  : Strong structural appetite: SFO, Foundation, faith-based pension,
+         or smaller endowment with open mandate and no evidence of restrictions;
+         OR known first-time fund backer
+  5-6  : No explicit programme but org type typically flexible (MFO, FoF)
   3-4  : Large institution; likely prefers established managers
   1-2  : Known policy against emerging managers OR confirmed GP
-  Do NOT default to 4-5. SFOs and small MFOs should score 6-7 unless restricted.
+  Do NOT default to 4-5 when data is thin.
+  Absence of information is NOT evidence of restrictions.
+  GP hard cap: emerging_fit <= 2
 
 Respond ONLY with valid JSON:
 {{
@@ -206,6 +153,34 @@ Respond ONLY with valid JSON:
 }}
 """
 
+STATUS_GUIDANCE = {
+    "New Contact": """EMAIL GOAL: First-time acquisition. They have never heard of PaceZero.
+  - Lead with the recent activity hook to show you did your homework
+  - Clearly explain what PaceZero does and why it is relevant to their mandate
+  - Ask for a 20-minute introductory call. Under 150 words.""",
+    "Previously Contacted": """EMAIL GOAL: Re-engagement. They have been contacted before but did not respond.
+  - Acknowledge prior outreach briefly and naturally — do not grovel
+  - Lead with something new: the recent activity hook or a fund update
+  - Soft ask for a call. Under 130 words.""",
+    "Existing Contact": """EMAIL GOAL: Relationship maintenance. They already know PaceZero.
+  - Skip the intro — they know who you are
+  - Open with the recent activity to show you follow their work
+  - Frame as a check-in, not a pitch. Ask for 15 minutes. Under 120 words.""",
+    "In Diligence": """EMAIL GOAL: Support and momentum. They are actively evaluating PaceZero.
+  - Acknowledge the process without being pushy
+  - Reference recent activity that reinforces the fit
+  - Offer to answer questions or provide materials. Under 120 words.""",
+    "Committed": """EMAIL GOAL: Relationship nurture. They have already committed.
+  - Warm, personal tone — they are a partner now
+  - Reference their recent activity as a shared interest
+  - No ask needed — stay warm. Under 100 words.""",
+    "Passed": """EMAIL GOAL: Keep the door open. They previously declined.
+  - Do not reference the pass directly
+  - Lead with the recent activity hook — show circumstances may have changed
+  - Very light touch, no hard sell. Under 100 words.""",
+}
+
+# ── Helpers ──
 def compute_composite(sf, rel, halo, em):
     return round(sf*WEIGHTS['sector_fit'] + rel*WEIGHTS['relationship_depth'] + halo*WEIGHTS['halo_value'] + em*WEIGHTS['emerging_fit'], 2)
 
@@ -253,6 +228,83 @@ def build_scored_df(df, results):
         })
     return pd.DataFrame(rows).sort_values('Composite', ascending=False).reset_index(drop=True)
 
+def generate_draft(row, sender_name, sender_title, tone):
+    research_prompt = f"""Search for the most recent publicly available activities from {row['Organization']} relevant to:
+  - Private credit or alternative investment allocations
+  - ESG, impact investing, or sustainability commitments
+  - Emerging manager programmes or first-time fund commitments
+  - New hires or leadership changes in their investment office
+  - Published reports, conference appearances, or media coverage
+Return 2-3 specific findings with dates (last 12-18 months). If nothing recent, say so in one sentence."""
+    try:
+        r1 = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":research_prompt}], max_tokens=300)
+        recent_activity = r1.choices[0].message.content.strip()
+        r_tok = r1.usage.total_tokens
+    except Exception:
+        recent_activity = "No recent activity found."
+        r_tok = 0
+
+    status   = row.get('Status', 'New Contact')
+    guidance = STATUS_GUIDANCE.get(status, STATUS_GUIDANCE["New Contact"])
+    draft_prompt = f"""You are a pitch person and fundraising analyst at PaceZero Capital Partners,
+a Toronto-based sustainability-focused private credit firm raising Fund II.
+PaceZero focus areas: Agriculture & Ecosystems, Energy Transition, Health & Education.
+Deal size: $3M to $20M. Emerging manager, Fund II.
+
+CONTACT STATUS: {status}
+{guidance}
+TONE: {tone}
+
+PROSPECT:
+  Organization : {row['Organization']}
+  Contact Name : {row['Contact Name']}
+  Org Type     : {row['Type']}
+  AUM          : {row['AUM']}
+  Tier         : {row['Tier']} (composite {row['Composite']} / 10)
+
+SCORING CONTEXT (use to personalize — do not quote scores in the email):
+  Sector alignment : {row['Why']}
+  Halo context     : {row['Halo Reasoning']}
+  Emerging fit     : {row['EM Reasoning']}
+  Org summary      : {row['Org Summary']}
+
+RECENT ACTIVITY (use the most relevant finding as your opening hook):
+{recent_activity}
+
+SENDER:
+  Name  : {sender_name or '[Your Name]'}
+  Title : {sender_title or '[Your Title]'}
+
+Return ONLY the email. Subject line first, then a blank line, then the body.
+No preamble, no commentary, no labels."""
+    r2    = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":draft_prompt}], max_tokens=400)
+    draft = r2.choices[0].message.content.strip()
+    d_tok = r2.usage.total_tokens
+    total_tok = r_tok + d_tok
+    cost = (total_tok / 1_000_000) * 12.50
+    return draft, recent_activity, total_tok, cost
+
+def gmail_link(draft):
+    lines   = draft.split("\n", 1)
+    subject = lines[0].replace("Subject:", "").strip() if lines else "Introduction — PaceZero Capital Partners"
+    body    = lines[1].strip() if len(lines) > 1 else draft
+    return f"https://mail.google.com/mail/?view=cm&fs=1&su={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
+
+DEMO_LIMIT_NOTE = """
+<div style='margin-top:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;font-size:12px;color:#92400e;line-height:1.6;'>
+    <strong>&#9733; Demo limitation:</strong> The Gmail button opens a compose window with subject and body
+    pre-filled via a URL deep link. It does not authenticate with your Gmail account or save to Drafts.
+    In production this would use the <strong>Gmail API with OAuth 2.0</strong> to push directly into your
+    Drafts folder — requiring a one-time Google login and credentials in Streamlit Secrets.
+</div>"""
+
+BATCH_LIMIT_NOTE = """
+<div style='margin-bottom:16px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;font-size:12px;color:#92400e;line-height:1.6;'>
+    <strong>&#9733; Demo limitation:</strong> Each Gmail button opens an individual compose window.
+    In production, batch drafts would be pushed directly into Gmail Drafts via the Gmail API with OAuth 2.0,
+    letting you review and send each email from your inbox without opening multiple tabs.
+</div>"""
+
 
 # ════════════════════════════════════════
 # SIDEBAR
@@ -262,17 +314,14 @@ with st.sidebar:
         st.image("pacezero_logo.png", width=140)
     except:
         st.markdown("**PaceZero**")
-
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
     st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#8b949e;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:16px;'>LP Scoring Engine v1.0</div>", unsafe_allow_html=True)
     st.markdown("---")
-    role_view = st.radio("DASHBOARD VIEW", ["Executive", "Analyst", "Terms Dictionary"], index=0)
+    page = st.radio("NAVIGATE", ["📊 Report", "💰 Cost & Tokens", "📖 Terms Dictionary", "✉️ Email Drafting"], index=0)
     st.markdown("---")
-
     st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#8b949e;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px;'>Scoring Weights</div>", unsafe_allow_html=True)
     for dim, w in [("Sector Fit","35%"),("Rel. Depth","30%"),("Halo Value","20%"),("Emerging Fit","15%")]:
         st.markdown(f"<div style='display:flex;justify-content:space-between;margin-bottom:6px;'><span style='font-size:12px;color:#8b949e;'>{dim}</span><span style='font-family:DM Mono,monospace;font-size:12px;color:#58a6ff;'>{w}</span></div>", unsafe_allow_html=True)
-
     st.markdown("---")
     st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#8b949e;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;'>Tier Thresholds</div>", unsafe_allow_html=True)
     for label, thr, color in [("PRIORITY CLOSE","≥ 8.0","#3fb950"),("STRONG FIT","≥ 6.5","#58a6ff"),("MODERATE FIT","≥ 5.0","#e3b341"),("WEAK FIT","< 5.0","#f85149")]:
@@ -280,7 +329,7 @@ with st.sidebar:
 
 
 # ════════════════════════════════════════
-# HEADER
+# GLOBAL HEADER
 # ════════════════════════════════════════
 st.markdown("""
 <div style='padding:28px 0 8px 0;'>
@@ -293,94 +342,54 @@ st.markdown("<hr>", unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════
-# TERMS DICTIONARY
+# QUICK SCORE + CSV UPLOAD (always visible)
 # ════════════════════════════════════════
-if role_view == "Terms Dictionary":
-    st.markdown('<div class="section-header">Terms Dictionary</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-sub">Jargon guide for the LP prospect scoring system</div>', unsafe_allow_html=True)
-    search   = st.text_input("Search terms", placeholder="e.g. LP, AUM, composite...")
-    filtered = {k:v for k,v in TERMS.items() if not search or search.lower() in k.lower() or search.lower() in v.lower()}
-    if not filtered:
-        st.info("No terms found.")
-    else:
-        for term, definition in filtered.items():
-            st.markdown(f'<div class="term-card"><div class="term-name">{term}</div><div class="term-def">{definition}</div></div>', unsafe_allow_html=True)
-    st.stop()
-
-
-# ════════════════════════════════════════
-# QUICK SCORE
-# ════════════════════════════════════════
-st.markdown('<div class="section-header">Quick Score</div>', unsafe_allow_html=True)
-st.markdown('<div class="section-sub">Manually score a single prospect without uploading a CSV</div>', unsafe_allow_html=True)
-
-with st.expander("Open Quick Score", expanded=False):
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("**Organization**")
-        manual_org      = st.text_input("Organization name", placeholder="e.g. Carnegie Corporation", label_visibility="collapsed", key="manual_org")
+with st.expander("Quick Score — score a single org manually"):
+    q1, q2 = st.columns(2)
+    with q1:
+        manual_org      = st.text_input("Organization name", key="manual_org")
         manual_org_type = st.selectbox("Org Type", ORG_TYPES, key="manual_org_type")
-    with col2:
-        st.markdown("**Contact Person**")
-        manual_contact = st.text_input("Contact name", placeholder="e.g. Jane Smith", label_visibility="collapsed", key="manual_contact")
-        manual_role    = st.text_input("Role / Title", placeholder="e.g. Director of Investments", key="manual_role")
-        manual_status  = st.selectbox("Contact Status", CONTACT_STATUSES, key="manual_status")
-    with col3:
-        st.markdown("**Relationship**")
-        manual_rel = st.slider("Relationship Depth (D2)", 1, 10, 5, key="manual_rel", help="Your CRM score — how warm is this relationship?")
-        st.caption("Sector Fit, Halo, and Emerging Fit are fully AI-generated.")
+        manual_contact  = st.text_input("Contact name", key="manual_contact")
+    with q2:
+        manual_role   = st.text_input("Role / Title", key="manual_role")
+        manual_status = st.selectbox("Contact Status", CONTACT_STATUSES, key="manual_status")
+        manual_rel    = st.slider("Relationship Depth (D2)", 1, 10, 5, key="manual_rel")
 
-    run_manual = st.button("Score This Prospect", key="run_manual", type="primary")
-
-    if run_manual:
-        if not manual_org:
-            st.warning("Please enter an organization name.")
-        else:
-            with st.spinner(f"Researching {manual_org}..."):
-                try:
-                    data      = score_org(manual_org, manual_org_type, manual_role or "Unknown")
-                    sf        = data.get('sector_fit_score', 5)
-                    ha        = data.get('halo_score', 5)
-                    em        = data.get('emerging_fit_score', 5)
-                    composite = compute_composite(sf, manual_rel, ha, em)
-                    tier      = classify_tier(composite)
-
-                    st.markdown("<hr>", unsafe_allow_html=True)
-                    st.markdown(f"""
-                    <div style='margin-bottom:12px;'>
-                        <span style='font-family:Playfair Display,serif;font-size:22px;font-weight:700;color:#1a1a2e;'>{manual_org}</span>
-                        &nbsp;&nbsp;{tier_badge(tier)}&nbsp;&nbsp;{conf_badge(data.get('confidence','LOW'))}
-                    </div>
-                    <div style='font-size:13px;color:#6b7280;margin-bottom:20px;'>{data.get('org_description','')}</div>
-                    """, unsafe_allow_html=True)
-
-                    m1, m2, m3, m4, m5 = st.columns(5)
-                    m1.metric("Composite",    composite)
-                    m2.metric("Sector Fit",   sf)
-                    m3.metric("Rel Depth",    manual_rel, help="Your manual input")
-                    m4.metric("Halo",         ha)
-                    m5.metric("Emerging Fit", em)
-
-                    with st.expander("View full AI reasoning"):
-                        st.markdown(f"**AUM:** {data.get('aum_estimate','Unknown')}")
-                        st.markdown(f"**GP Flag:** {'Yes — not an LP' if data.get('is_gp_or_service_provider') else 'No'}")
-                        st.info(f"**Sector Fit:** {data.get('sector_fit_reasoning','')}")
-                        st.info(f"**Halo:** {data.get('halo_reasoning','')}")
-                        st.info(f"**Emerging Fit:** {data.get('emerging_fit_reasoning','')}")
-                        cost_q = (data.get('_input_tokens',0)/1000*0.0025)+(data.get('_output_tokens',0)/1000*0.0100)
-                        st.caption(f"Tokens: {data.get('_tokens',0):,}  |  Cost: ${cost_q:.4f}")
-                except Exception as e:
-                    st.error(f"Scoring failed: {e}")
+    if st.button("Score This Org", key="manual_score_btn") and manual_org:
+        with st.spinner(f"Scoring {manual_org}..."):
+            try:
+                data      = score_org(manual_org, manual_org_type, manual_role or "Unknown")
+                sf        = data.get('sector_fit_score', 5)
+                ha        = data.get('halo_score', 5)
+                em        = data.get('emerging_fit_score', 5)
+                composite = compute_composite(sf, manual_rel, ha, em)
+                tier      = classify_tier(composite)
+                st.markdown(f"""
+                <div style='margin-bottom:12px;margin-top:16px;'>
+                    <span style='font-family:Playfair Display,serif;font-size:22px;font-weight:700;color:#1a1a2e;'>{manual_org}</span>
+                    &nbsp;&nbsp;{tier_badge(tier)}&nbsp;&nbsp;{conf_badge(data.get('confidence','LOW'))}
+                </div>
+                <div style='font-size:13px;color:#6b7280;margin-bottom:20px;'>{data.get('org_description','')}</div>
+                """, unsafe_allow_html=True)
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("Composite",    composite)
+                m2.metric("Sector Fit",   sf)
+                m3.metric("Rel Depth",    manual_rel)
+                m4.metric("Halo",         ha)
+                m5.metric("Emerging Fit", em)
+                with st.expander("View full AI reasoning"):
+                    st.markdown(f"**AUM:** {data.get('aum_estimate','Unknown')}")
+                    st.markdown(f"**GP Flag:** {'Yes' if data.get('is_gp_or_service_provider') else 'No'}")
+                    st.info(f"**Sector Fit:** {data.get('sector_fit_reasoning','')}")
+                    st.info(f"**Halo:** {data.get('halo_reasoning','')}")
+                    st.info(f"**Emerging Fit:** {data.get('emerging_fit_reasoning','')}")
+                    cost_q = (data.get('_input_tokens',0)/1000*0.0025)+(data.get('_output_tokens',0)/1000*0.0100)
+                    st.caption(f"Tokens: {data.get('_tokens',0):,}  |  Cost: ${cost_q:.4f}")
+            except Exception as e:
+                st.error(f"Scoring failed: {e}")
 
 st.markdown("<hr>", unsafe_allow_html=True)
-
-
-# ════════════════════════════════════════
-# FULL PIPELINE
-# ════════════════════════════════════════
-st.markdown('<div class="section-header">Full Pipeline</div>', unsafe_allow_html=True)
-st.markdown('<div class="section-sub">Upload your prospect CSV to enrich and score the full pipeline</div>', unsafe_allow_html=True)
-
+st.markdown('<div class="section-sub">Upload your prospect CSV to run the full pipeline</div>', unsafe_allow_html=True)
 uploaded_file = st.file_uploader("Upload challenge_contacts.csv", type="csv")
 
 if uploaded_file:
@@ -398,16 +407,16 @@ if uploaded_file:
     c3.metric("Held Out (Test)", int(test_mask.sum()))
 
     if st.button("Run Full Pipeline", type="primary"):
-        results  = []
+        results = []
         unique_orgs = train_df.groupby('Organization').first().reset_index()
         total       = len(unique_orgs)
         progress    = st.progress(0)
-        status      = st.empty()
+        status_msg  = st.empty()
         total_in = total_out = 0
 
         for i, (_, row) in enumerate(unique_orgs.iterrows()):
             org_name = row['Organization']
-            status.caption(f"Scoring {i+1}/{total} — {org_name}")
+            status_msg.caption(f"Scoring {i+1}/{total} — {org_name}")
             try:
                 data = score_org(org_name, row['Org Type'], row['Role'])
                 data['org_name'] = org_name
@@ -422,27 +431,27 @@ if uploaded_file:
 
         scored_df = build_scored_df(train_df, results)
         cost      = (total_in/1000*0.0025) + (total_out/1000*0.0100)
-        status.caption("Pipeline complete")
-
+        status_msg.caption("Pipeline complete")
         st.session_state['scored_df'] = scored_df
         st.session_state['results']   = results
         st.session_state['cost']      = cost
         st.session_state['tokens']    = total_in + total_out
 
+st.markdown("<hr>", unsafe_allow_html=True)
+
 
 # ════════════════════════════════════════
-# DASHBOARD
+# PAGE: REPORT
 # ════════════════════════════════════════
-if 'scored_df' in st.session_state:
-    scored_df   = st.session_state['scored_df']
-    cost        = st.session_state['cost']
-    tokens      = st.session_state['tokens']
-    tier_counts = scored_df['Tier'].value_counts()
+if page == "📊 Report":
+    if 'scored_df' not in st.session_state:
+        st.info("Upload and score a CSV above to see the report.")
+    else:
+        scored_df   = st.session_state['scored_df']
+        cost        = st.session_state['cost']
+        tier_counts = scored_df['Tier'].value_counts()
 
-    st.markdown("<hr>", unsafe_allow_html=True)
-
-    # ── EXECUTIVE ──
-    if role_view == "Executive":
+        # Executive Summary
         st.markdown('<div class="section-header">Executive Summary</div>', unsafe_allow_html=True)
         st.markdown('<div class="section-sub">High-level pipeline overview for GP and partner review</div>', unsafe_allow_html=True)
 
@@ -487,9 +496,9 @@ if 'scored_df' in st.session_state:
         tier_order = ['PRIORITY CLOSE','STRONG FIT','MODERATE FIT','WEAK FIT']
         st.bar_chart(pd.DataFrame({'Tier':tier_order,'Count':[tier_counts.get(t,0) for t in tier_order]}).set_index('Tier'))
 
-    # ── ANALYST ──
-    elif role_view == "Analyst":
-        st.markdown('<div class="section-header">Analyst Dashboard</div>', unsafe_allow_html=True)
+        # Analyst Section
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown('<div class="section-header">Analyst View</div>', unsafe_allow_html=True)
         st.markdown('<div class="section-sub">Full pipeline with filters, scoring breakdown, and prospect deep dive</div>', unsafe_allow_html=True)
 
         fc1, fc2, fc3, fc4 = st.columns(4)
@@ -498,41 +507,38 @@ if 'scored_df' in st.session_state:
         conf_filter = fc3.multiselect("Confidence", ['HIGH','MEDIUM','LOW'], default=['HIGH','MEDIUM','LOW'])
         hide_gp     = fc4.checkbox("Hide GPs", value=True)
 
-        filtered_df = scored_df[scored_df['Tier'].isin(tier_filter) & scored_df['Type'].isin(type_filter) & scored_df['Confidence'].isin(conf_filter)]
+        filtered_df = scored_df[
+            scored_df['Tier'].isin(tier_filter) &
+            scored_df['Type'].isin(type_filter) &
+            scored_df['Confidence'].isin(conf_filter)
+        ]
         if hide_gp:
             filtered_df = filtered_df[filtered_df['Is GP'] == False]
 
         st.caption(f"{len(filtered_df)} prospects shown")
 
-        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        k1, k2, k3, k4 = st.columns(4)
         k1.metric("Showing",        len(filtered_df))
         k2.metric("Priority Close", len(filtered_df[filtered_df['Tier']=='PRIORITY CLOSE']))
         k3.metric("Strong Fit",     len(filtered_df[filtered_df['Tier']=='STRONG FIT']))
         k4.metric("Avg Composite",  round(filtered_df['Composite'].mean(),2) if len(filtered_df) else 0)
-        k5.metric("Total Tokens",   f"{tokens:,}")
-        k6.metric("Run Cost",       f"${cost:.4f}")
 
         st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Full Pipeline</div>", unsafe_allow_html=True)
         display_cols = ['Contact Name','Organization','Type','Region','Sector Fit','Rel Depth','Halo','Emerging Fit','Composite','Tier','AUM','Confidence']
         st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True)
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Score Distribution</div>", unsafe_allow_html=True)
-
         full_index = pd.RangeIndex(1, 11)
         dc1, dc2, dc3 = st.columns(3)
-
         sf_counts = filtered_df['Sector Fit'].value_counts().reindex(full_index, fill_value=0).reset_index()
         sf_counts.columns = ['Score','Count']
         dc1.markdown("**D1 — Sector & Mandate Fit**")
         dc1.bar_chart(sf_counts.set_index('Score'))
-
         halo_counts = filtered_df['Halo'].value_counts().reindex(full_index, fill_value=0).reset_index()
         halo_counts.columns = ['Score','Count']
         dc2.markdown("**D3 — Halo & Strategic Value**")
         dc2.bar_chart(halo_counts.set_index('Score'))
-
         em_counts = filtered_df['Emerging Fit'].value_counts().reindex(full_index, fill_value=0).reset_index()
         em_counts.columns = ['Score','Count']
         dc3.markdown("**D4 — Emerging Manager Fit**")
@@ -540,7 +546,6 @@ if 'scored_df' in st.session_state:
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Prospect Deep Dive</div>", unsafe_allow_html=True)
-
         selected_org = st.selectbox("Select an organization", options=filtered_df['Organization'].tolist())
         if selected_org:
             row = filtered_df[filtered_df['Organization'] == selected_org].iloc[0]
@@ -552,7 +557,6 @@ if 'scored_df' in st.session_state:
             </div>
             <div style='font-size:13px;color:#6b7280;margin-bottom:20px;'>{row['Org Summary']}</div>
             """, unsafe_allow_html=True)
-
             d1, d2 = st.columns(2)
             with d1:
                 st.markdown(f"**Contact:** {row['Contact Name']}")
@@ -563,199 +567,191 @@ if 'scored_df' in st.session_state:
             with d2:
                 st.metric("Composite Score", row['Composite'])
                 s1, s2 = st.columns(2)
-                s1.metric("Sector Fit (D1)",   row['Sector Fit'])
-                s2.metric("Rel Depth (D2)",    row['Rel Depth'])
+                s1.metric("Sector Fit (D1)", row['Sector Fit'])
+                s2.metric("Rel Depth (D2)",  row['Rel Depth'])
                 s3, s4 = st.columns(2)
-                s3.metric("Halo (D3)",         row['Halo'])
-                s4.metric("Emerging Fit (D4)", row['Emerging Fit'])
-
+                s3.metric("Halo (D3)",          row['Halo'])
+                s4.metric("Emerging Fit (D4)",  row['Emerging Fit'])
             st.markdown("<br>", unsafe_allow_html=True)
             st.info(f"**Sector Fit:** {row['Why']}")
             st.info(f"**Halo:** {row['Halo Reasoning']}")
             st.info(f"**Emerging Fit:** {row['EM Reasoning']}")
 
         st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>API Cost Tracker</div>", unsafe_allow_html=True)
-        cost_per_org = cost / max(len(st.session_state['results']), 1)
-        st.table(pd.DataFrame({'Prospects':[100,500,1000,5000],'Est. Cost':[f"${cost_per_org*n:.2f}" for n in [100,500,1000,5000]]}))
+        st.download_button("Download Scored Results as CSV", data=scored_df.to_csv(index=False), file_name="pacezero_scored_pipeline.csv", mime="text/csv")
+
+
+# ════════════════════════════════════════
+# PAGE: COST & TOKENS
+# ════════════════════════════════════════
+elif page == "💰 Cost & Tokens":
+    st.markdown('<div class="section-header">Cost & Token Usage</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">API usage breakdown and scaling projections</div>', unsafe_allow_html=True)
+
+    if 'scored_df' not in st.session_state:
+        st.info("Run the pipeline above to see cost data.")
+    else:
+        cost    = st.session_state['cost']
+        tokens  = st.session_state['tokens']
+        results = st.session_state['results']
+        n_orgs  = len(results)
+
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Total Tokens",  f"{tokens:,}")
+        r2.metric("Total Cost",    f"${cost:.4f}")
+        r3.metric("Orgs Scored",   n_orgs)
+        r4.metric("Cost per Org",  f"${cost/max(n_orgs,1):.4f}")
 
         st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;'>Outreach Draft Generator</div>", unsafe_allow_html=True)
-        st.caption("Researches the org's most recent activity, then drafts a personalized first-touch email.")
-
-        outreach_org = st.selectbox(
-            "Select a prospect",
-            options=filtered_df['Organization'].tolist(),
-            key="outreach_org"
-        )
-
-        if outreach_org:
-            outreach_row = filtered_df[filtered_df['Organization'] == outreach_org].iloc[0]
-
-            oc1, oc2 = st.columns(2)
-            with oc1:
-                sender_name  = st.text_input("Your name", placeholder="e.g. Adrian Darmali", key="sender_name")
-                sender_title = st.text_input("Your title", placeholder="e.g. Analyst, PaceZero Capital Partners", key="sender_title")
-            with oc2:
-                tone = st.selectbox("Tone", ["Professional", "Warm and conversational", "Direct and concise"], key="outreach_tone")
-
-            generate_outreach = st.button("Generate Outreach Draft", type="primary", key="generate_outreach")
-
-            if generate_outreach:
-
-                # ── CALL 1: Research recent activity ──
-                research_status = st.empty()
-                research_status.caption("Step 1 of 2 — Researching recent activity...")
-
-                try:
-                    research_prompt = f"""
-Search for the most recent publicly available activities, announcements,
-or initiatives from {outreach_org} that are relevant to any of the following:
-
-  - Private credit or alternative investment allocations
-  - ESG, impact investing, or sustainability commitments
-  - Emerging manager programmes or first-time fund commitments
-  - New hires or leadership changes in their investment office
-  - Published reports, conference appearances, or media coverage
-  - Any recent statements on their investment mandate or strategy
-
-Return 2-3 specific findings with dates where available.
-Focus only on activities from the last 12-18 months.
-Be specific — name the initiative, report, or event.
-If nothing recent is found, say so clearly in one sentence.
-"""
-                    research_response = client.chat.completions.create(
-                        model=MODEL,
-                        messages=[{"role": "user", "content": research_prompt}],
-                        max_tokens=300,
-                    )
-                    recent_activity = research_response.choices[0].message.content.strip()
-                    r_in  = research_response.usage.prompt_tokens
-                    r_out = research_response.usage.completion_tokens
-
-                except Exception as e:
-                    recent_activity = "No recent activity found."
-                    r_in = r_out = 0
-
-                # ── CALL 2: Draft the email ──
-                research_status.caption("Step 2 of 2 — Drafting outreach email...")
-
-                try:
-                    status = outreach_row.get('Status', 'New Contact')
-
-                    status_guidance = {
-                        "New Contact": """
-EMAIL GOAL: First-time acquisition. They have never heard of PaceZero.
-  - Lead with the recent activity hook to show you did your homework
-  - Clearly explain what PaceZero does and why it is relevant to their mandate
-  - Be confident and specific — this is a sell
-  - Ask for a 20-minute introductory call
-  - Under 150 words
-""",
-                        "Previously Contacted": """
-EMAIL GOAL: Re-engagement. They have been contacted before but did not respond or convert.
-  - Acknowledge the prior outreach briefly and naturally — do not grovel
-  - Lead with something new: the recent activity hook or a fund update
-  - Give them a reason this moment is the right time to reconnect
-  - Soft ask for a call — keep the pressure low
-  - Under 130 words
-""",
-                        "Existing Contact": """
-EMAIL GOAL: Relationship maintenance. They already know PaceZero.
-  - Skip the introduction — they know who you are
-  - Open with the recent activity to show you are following their work
-  - Frame the email as a check-in or sharing a relevant update, not a pitch
-  - No hard sell — the goal is to stay warm and top of mind
-  - Ask if they have 15 minutes to catch up
-  - Under 120 words
-""",
-                        "In Diligence": """
-EMAIL GOAL: Support and momentum. They are actively evaluating PaceZero.
-  - Acknowledge that they are in the process without being pushy
-  - Reference something from their recent activity that reinforces the fit
-  - Offer to answer any specific questions or provide additional materials
-  - Keep it supportive and confidence-building — not sales-y
-  - Under 120 words
-""",
-                        "Committed": """
-EMAIL GOAL: Relationship nurture. They have already committed to the fund.
-  - Warm, personal tone — they are a partner now, not a prospect
-  - Reference their recent activity as a shared interest or alignment signal
-  - Share a brief fund update or milestone if relevant
-  - No ask needed — just keep the relationship warm
-  - Under 100 words
-""",
-                        "Passed": """
-EMAIL GOAL: Keep the door open. They previously declined or passed.
-  - Do not reference the pass directly
-  - Lead with the recent activity hook — show circumstances may have changed
-  - Very light touch — one paragraph, no hard sell
-  - Leave the door open for a future conversation without pressure
-  - Under 100 words
-""",
-                    }
-
-                    guidance = status_guidance.get(status, status_guidance["New Contact"])
-
-                    draft_prompt = f"""
-You are a pitch person and fundraising analyst at PaceZero Capital Partners,
-a Toronto-based sustainability-focused private credit firm raising Fund II.
-
-PaceZero focus areas: Agriculture & Ecosystems, Energy Transition, Health & Education.
-Deal size: $3M to $20M. Emerging manager, Fund II.
-
-CONTACT STATUS: {status}
-
-{guidance}
-
-TONE: {tone}
-
-PROSPECT:
-  Organization : {outreach_row['Organization']}
-  Contact Name : {outreach_row['Contact Name']}
-  Org Type     : {outreach_row['Type']}
-  AUM          : {outreach_row['AUM']}
-  Tier         : {outreach_row['Tier']} (composite score {outreach_row['Composite']} / 10)
-
-SCORING CONTEXT (use this to personalize — do not quote scores in the email):
-  Sector alignment : {outreach_row['Why']}
-  Halo context     : {outreach_row['Halo Reasoning']}
-  Emerging fit     : {outreach_row['EM Reasoning']}
-  Org summary      : {outreach_row['Org Summary']}
-
-RECENT ACTIVITY (use the most relevant finding as your opening hook):
-{recent_activity}
-
-SENDER:
-  Name  : {sender_name or '[Your Name]'}
-  Title : {sender_title or '[Your Title]'}
-
-Return ONLY the email. Subject line first, then a blank line, then the body.
-No preamble, no commentary, no labels.
-"""
-                    draft_response = client.chat.completions.create(
-                        model=MODEL,
-                        messages=[{"role": "user", "content": draft_prompt}],
-                        max_tokens=400,
-                    )
-
-                    draft    = draft_response.choices[0].message.content.strip()
-                    d_in     = draft_response.usage.prompt_tokens
-                    d_out    = draft_response.usage.completion_tokens
-                    total_cost = ((r_in + d_in) / 1000 * 0.0025) + ((r_out + d_out) / 1000 * 0.0100)
-
-                    research_status.empty()
-
-                    st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;margin-top:16px;'>Recent Activity Found</div>", unsafe_allow_html=True)
-                    st.info(recent_activity)
-
-                    st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;margin-top:16px;'>Generated Draft</div>", unsafe_allow_html=True)
-                    st.text_area("", value=draft, height=300, key="draft_output")
-                    st.caption(f"2 API calls  |  Tokens: {r_in + r_out + d_in + d_out:,}  |  Cost: ${total_cost:.4f}")
-
-                except Exception as e:
-                    research_status.empty()
-                    st.error(f"Draft generation failed: {e}")
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Scaling Projection</div>", unsafe_allow_html=True)
+        cost_per_org = cost / max(n_orgs, 1)
+        scale_df = pd.DataFrame({
+            'Prospects':       [100, 500, 1000, 5000, 10000],
+            'Est. Total Cost': [f"${cost_per_org*n:.2f}" for n in [100,500,1000,5000,10000]],
+            'Cost per Org':    [f"${cost_per_org:.4f}"]*5,
+        })
+        st.table(scale_df)
 
         st.markdown("<hr>", unsafe_allow_html=True)
-        st.download_button(label="Download Scored Results as CSV", data=scored_df.to_csv(index=False), file_name="pacezero_scored_pipeline.csv", mime="text/csv")
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Token Breakdown by Org</div>", unsafe_allow_html=True)
+        token_rows = [{
+            'Organization':  r.get('org_name',''),
+            'Input Tokens':  r.get('_input_tokens',0),
+            'Output Tokens': r.get('_output_tokens',0),
+            'Total Tokens':  r.get('_tokens',0),
+            'Cost':          f"${(r.get('_input_tokens',0)/1000*0.0025)+(r.get('_output_tokens',0)/1000*0.0100):.4f}",
+        } for r in results]
+        st.dataframe(pd.DataFrame(token_rows).sort_values('Total Tokens', ascending=False), use_container_width=True, hide_index=True)
+
+
+# ════════════════════════════════════════
+# PAGE: TERMS DICTIONARY
+# ════════════════════════════════════════
+elif page == "📖 Terms Dictionary":
+    st.markdown('<div class="section-header">Terms Dictionary</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">Definitions for LP scoring concepts and fundraising terminology</div>', unsafe_allow_html=True)
+
+    search = st.text_input("Search terms", placeholder="e.g. emerging manager, halo, composite...")
+    filtered_terms = {k: v for k, v in TERMS.items() if not search or search.lower() in k.lower() or search.lower() in v.lower()}
+
+    for term, definition in filtered_terms.items():
+        st.markdown(f"""
+        <div class="term-card">
+            <div class="term-name">{term}</div>
+            <div class="term-def">{definition}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    if not filtered_terms:
+        st.info("No matching terms found.")
+
+
+# ════════════════════════════════════════
+# PAGE: EMAIL DRAFTING
+# ════════════════════════════════════════
+elif page == "✉️ Email Drafting":
+    st.markdown('<div class="section-header">Email Drafting</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-sub">AI-researched, personalized outreach — single or batch</div>', unsafe_allow_html=True)
+
+    if 'scored_df' not in st.session_state:
+        st.info("Run the pipeline first to enable email drafting.")
+    else:
+        scored_df = st.session_state['scored_df']
+
+        # Sender details (shared across both modes)
+        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Sender Details</div>", unsafe_allow_html=True)
+        e1, e2, e3 = st.columns(3)
+        sender_name  = e1.text_input("Your name",  placeholder="e.g. Adrian Darmali")
+        sender_title = e2.text_input("Your title", placeholder="e.g. Analyst, PaceZero Capital Partners")
+        tone         = e3.selectbox("Tone", ["Professional", "Warm and conversational", "Direct and concise"])
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        mode = st.radio("Mode", ["Single org", "Batch"], horizontal=True)
+
+        # ── SINGLE ──
+        if mode == "Single org":
+            selected = st.selectbox("Select a prospect", options=scored_df['Organization'].tolist())
+            if selected:
+                row = scored_df[scored_df['Organization'] == selected].iloc[0]
+                st.markdown(f"""
+                <div style='background:#f0f4ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px 18px;margin-bottom:16px;font-size:13px;'>
+                    <strong>{row['Organization']}</strong> &nbsp;·&nbsp; {row['Type']} &nbsp;·&nbsp;
+                    Status: {row['Status']} &nbsp;·&nbsp; Composite {row['Composite']} &nbsp;·&nbsp; {row['Tier']}
+                </div>
+                """, unsafe_allow_html=True)
+
+                if st.button("Generate Draft", type="primary"):
+                    with st.spinner("Step 1 of 2 — Researching recent activity..."):
+                        try:
+                            draft, recent_activity, tok, cost_e = generate_draft(row, sender_name, sender_title, tone)
+
+                            st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;margin-top:16px;'>Recent Activity Found</div>", unsafe_allow_html=True)
+                            st.info(recent_activity)
+                            st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;margin-top:8px;'>Generated Draft</div>", unsafe_allow_html=True)
+                            st.text_area("", value=draft, height=300, key="single_draft_out")
+                            st.caption(f"2 API calls  |  Tokens: {tok:,}  |  Cost: ${cost_e:.4f}")
+                            st.link_button("Open in Gmail", gmail_link(draft))
+                            st.markdown(DEMO_LIMIT_NOTE, unsafe_allow_html=True)
+
+                        except Exception as e:
+                            st.error(f"Draft generation failed: {e}")
+
+        # ── BATCH ──
+        else:
+            st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Filter prospects</div>", unsafe_allow_html=True)
+            bf1, bf2 = st.columns(2)
+            batch_tier_f   = bf1.multiselect("Tier",   ['PRIORITY CLOSE','STRONG FIT','MODERATE FIT','WEAK FIT'], default=['PRIORITY CLOSE','STRONG FIT'])
+            batch_status_f = bf2.multiselect("Status", CONTACT_STATUSES, default=CONTACT_STATUSES)
+
+            batch_pool = scored_df[
+                scored_df['Tier'].isin(batch_tier_f) &
+                scored_df['Status'].isin(batch_status_f)
+            ]
+
+            selected_orgs = st.multiselect(
+                f"Select orgs to draft for ({len(batch_pool)} match filters)",
+                options=batch_pool['Organization'].tolist(),
+                default=batch_pool['Organization'].tolist()[:5],
+            )
+
+            if selected_orgs:
+                est_cost = len(selected_orgs) * 0.015
+                st.caption(f"{len(selected_orgs)} prospects selected  |  Est. cost: ~${est_cost:.3f}  |  ~{len(selected_orgs)*2} API calls")
+
+                if st.button(f"Generate {len(selected_orgs)} Drafts", type="primary"):
+                    batch_progress  = st.progress(0)
+                    batch_status_ph = st.empty()
+                    batch_results   = []
+                    total_tok = 0
+                    total_cost_batch = 0.0
+
+                    for i, org in enumerate(selected_orgs):
+                        batch_status_ph.caption(f"Drafting {i+1}/{len(selected_orgs)} — {org}")
+                        row = scored_df[scored_df['Organization'] == org].iloc[0]
+                        try:
+                            draft, recent_activity, tok, cost_e = generate_draft(row, sender_name, sender_title, tone)
+                            total_tok        += tok
+                            total_cost_batch += cost_e
+                            batch_results.append({'org': org, 'row': row, 'draft': draft, 'recent': recent_activity, 'tok': tok, 'error': None})
+                        except Exception as e:
+                            batch_results.append({'org': org, 'row': row, 'draft': None, 'recent': None, 'tok': 0, 'error': str(e)})
+                        batch_progress.progress((i+1)/len(selected_orgs))
+
+                    batch_status_ph.caption(f"Done — {len(batch_results)} drafts generated  |  Tokens: {total_tok:,}  |  Cost: ${total_cost_batch:.4f}")
+                    st.markdown(BATCH_LIMIT_NOTE, unsafe_allow_html=True)
+
+                    for res in batch_results:
+                        tier_label = res['row']['Tier']
+                        status_label = res['row']['Status']
+                        with st.expander(f"{res['org']}   ·   {tier_label}   ·   {status_label}"):
+                            if res['error']:
+                                st.error(f"Failed: {res['error']}")
+                            else:
+                                st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;'>Recent Activity</div>", unsafe_allow_html=True)
+                                st.info(res['recent'])
+                                st.markdown("<div style='font-family:DM Mono,monospace;font-size:10px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;margin-top:12px;'>Draft</div>", unsafe_allow_html=True)
+                                st.text_area("", value=res['draft'], height=260, key=f"draft_{res['org']}")
+                                col_a, col_b = st.columns([1,5])
+                                col_a.caption(f"Tokens: {res['tok']:,}")
+                                with col_b:
+                                    st.link_button("Open in Gmail", gmail_link(res['draft']), key=f"gmail_{res['org']}")
