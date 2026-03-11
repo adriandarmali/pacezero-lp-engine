@@ -153,40 +153,79 @@ ORGANIZATION:
   Type   : {org_type}
   Contact: {role}
 
+PRE-SEARCH RULE — ABBREVIATIONS:
+  If the org name looks like an abbreviation (all caps, no spaces),
+  search for the full name first before scoring.
+  Example: "PBUCC" → search "PBUCC pension" to find full name before researching.
+
 CRITICAL RULE — LP vs GP DISTINCTION:
-  LP = allocates capital INTO externally managed funds
-  GP = PRIMARILY manages funds for others / originates loans / brokers deals
-  Only mark as GP if PURELY a service provider with no external fund allocations.
+  LP = allocates capital INTO externally managed funds → score normally
+  GP = PRIMARILY manages funds for others / originates loans / brokers deals → apply caps
 
-  Examples of LPs: Neuberger Berman, Lincoln Financial, Bessemer Trust, BBH, Ludwig Institute
-  Examples of GPs: Meridian Capital Group (CRE brokerage), Gratitude Railroad (asset manager)
+  If an org allocates to external managers even partially, treat as LP.
+  Only mark is_gp_or_service_provider = true if the org is PURELY a:
+    - Real estate broker or advisory firm
+    - Loan originator with no external fund allocations
+    - Pure investment bank or placement agent
+    - Pure service provider with no investing activity
 
-  GP hard caps: sector_fit <= 2, emerging_fit <= 2, halo <= 3
+  Examples of LPs (do NOT flag as GP):
+    - Neuberger Berman              → asset manager that allocates to external funds
+    - Lincoln Financial             → insurance company with large LP allocation programme
+    - Bessemer Trust                → MFO that allocates to external managers
+    - Brown Brothers Harriman       → private bank with LP allocation activity
+    - Ludwig Institute for Cancer Research → medical foundation with investment office
+    - Safra Group                   → private banking group with external allocations
+
+  Examples of true GPs/service providers (flag as GP):
+    - Meridian Capital Group        → pure CRE brokerage, no external fund allocations
+    - Gratitude Railroad            → impact asset manager, manages funds for others
+    - A placement agent or fundraising consultant
+    - A company that only originates and holds loans
+
+  GP hard caps (only apply if PURELY a GP/service provider):
+    sector_fit <= 2, emerging_fit <= 2, halo <= 3
 
 RUBRIC 1 — SECTOR & MANDATE FIT (1-10):
   9-10 : Private credit allocation + sustainability/ESG mandate (BOTH confirmed)
   7-8  : One confirmed strongly, other strongly implied
   5-6  : LP with alternatives exposure but weak ESG, OR strong ESG but no credit signal
   3-4  : LP confirmed but no alignment signals found
-  1-2  : GP / broker / lender / service provider
+  1-2  : Purely a GP / broker / lender / service provider
 
 RUBRIC 2 — HALO & STRATEGIC VALUE (1-10):
-  9-10 : Globally recognized institution
-  7-8  : Well-known in impact/sustainability LP circles
-  5-6  : Respected regionally or within a niche
-  3-4  : Limited public presence
-  1-2  : Unknown or reputation-neutral
-  SFOs: max 7 unless globally famous billionaire family with $1B+ AUM
+  9-10 : Globally recognized — major university endowment or globally known
+         private foundation tier
+  7-8  : Well-known specifically in impact/sustainability LP circles
+  5-6  : Respected regionally or within a niche; some public presence
+  3-4  : Limited public presence; small or private institution
+  1-2  : Unknown, purely private, no meaningful public footprint
+
+  SFO GUIDANCE:
+    Most SFOs score 3-4 (private, limited public presence)
+    Exception: score 6-7 if explicitly tied to a famous family or billionaire
+               AND manages $1B+ (e.g. Bloomberg Family Office)
+    Never score an SFO above 7 unless globally famous at institutional level
+
+  GP/service provider hard cap: halo <= 3
 
 RUBRIC 3 — EMERGING MANAGER FIT (1-10):
-  9-10 : Documented emerging manager programme; backed Fund I/II before
-  7-8  : Flexible smaller institution; SFOs and small MFOs with open mandate
-  5-6  : No explicit programme but org type typically flexible
-  3-4  : Large institution; likely prefers established managers
-  1-2  : Known policy against emerging managers OR confirmed GP
-  Do NOT default to 4-5. SFOs and small MFOs should score 6-7 unless restricted.
+  9-10 : Documented emerging manager programme; has backed Fund I/II on record
+  7-8  : Strong structural appetite: SFO, Foundation, faith-based pension,
+         or smaller endowment with open mandate and no evidence of restrictions;
+         OR known first-time fund backer
+  5-6  : Mid-size MFO or FoF with no explicit programme but typically flexible
+  3-4  : Large institutional allocator ($10B+ AUM); likely prefers established managers
+  1-2  : Known policy against emerging managers OR purely a GP/service provider
 
-Respond ONLY with valid JSON:
+  Do NOT default to 4-5 when data is thin. Actively look for evidence
+  in both directions. If no restrictions are found, score based on
+  org type using the bands above.
+  Absence of information is NOT evidence of restrictions.
+  GP/service provider hard cap: emerging_fit <= 2
+
+Respond ONLY with valid JSON. No preamble, no markdown, no extra text.
+
 {{
   "org_name": "{org_name}",
   "org_description": "<2 sentence factual summary>",
