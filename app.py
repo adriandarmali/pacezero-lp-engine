@@ -395,9 +395,18 @@ if 'scored_df' in st.session_state:
         # Score distribution
         st.markdown("### Score Distribution")
         dc1, dc2, dc3 = st.columns(3)
-        dc1.bar_chart(pd.DataFrame({'Sector Fit': filtered_df['Sector Fit'].value_counts().sort_index()}))
-        dc2.bar_chart(pd.DataFrame({'Halo': filtered_df['Halo'].value_counts().sort_index()}))
-        dc3.bar_chart(pd.DataFrame({'Emerging Fit': filtered_df['Emerging Fit'].value_counts().sort_index()}))
+        sf_counts = filtered_df['Sector Fit'].value_counts().sort_index().reset_index()
+        sf_counts.columns = ['Score', 'Count']
+        dc1.bar_chart(sf_counts.set_index('Score'))
+        
+        halo_counts = filtered_df['Halo'].value_counts().sort_index().reset_index()
+        halo_counts.columns = ['Score', 'Count']
+        dc2.bar_chart(halo_counts.set_index('Score'))
+        
+        em_counts = filtered_df['Emerging Fit'].value_counts().sort_index().reset_index()
+        em_counts.columns = ['Score', 'Count']
+        dc3.bar_chart(em_counts.set_index('Score'))
+
 
         st.markdown("---")
 
