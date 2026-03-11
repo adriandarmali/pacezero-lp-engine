@@ -6,7 +6,8 @@ import time
 import urllib.parse
 import logging
 import os
-from openai import OpenAI
+import asyncio
+from openai import OpenAI, AsyncOpenAI
 
 # ── Logging setup ──
 LOG_FILE = "pacezero_pipeline.log"
@@ -63,7 +64,10 @@ hr { border-color: #e0e4ec; margin: 28px 0; }
 """, unsafe_allow_html=True)
 
 # ── API & Constants ──
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+client       = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+async_client = AsyncOpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+CHECKPOINT_FILE = "pacezero_checkpoint.json"
+CONCURRENCY     = 5   # orgs scored in parallel
 MODEL  = "gpt-4o"
 WEIGHTS = {'sector_fit':0.35,'relationship_depth':0.30,'halo_value':0.20,'emerging_fit':0.15}
 TIERS   = [(8.0,'PRIORITY CLOSE'),(6.5,'STRONG FIT'),(5.0,'MODERATE FIT'),(0.0,'WEAK FIT')]
@@ -256,6 +260,73 @@ def score_org(org_name, org_type, role):
     logger.info(f"  Scored: {org_name} — SF={data.get('sector_fit_score')} Halo={data.get('halo_score')} EM={data.get('emerging_fit_score')} conf={data.get('confidence')} tokens={data['_tokens']}")
     return data
 
+# ── Checkpoint helpers ──
+def checkpoint_load():
+    if os.path.exists(CHECKPOINT_FILE):
+        try:
+            with open(CHECKPOINT_FILE) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def checkpoint_save(results_dict):
+    with open(CHECKPOINT_FILE, 'w') as f:
+        json.dump(results_dict, f)
+
+def checkpoint_clear():
+    if os.path.exists(CHECKPOINT_FILE):
+        os.remove(CHECKPOINT_FILE)
+
+# ── Async score (used by concurrent pipeline) ──
+async def score_org_async(org_name, org_type, role, semaphore):
+    async with semaphore:
+        logger.info(f"Scoring (async): {org_name}")
+        prompt = SCORING_PROMPT.format(org_name=org_name, org_type=org_type, role=role)
+        try:
+            response = await async_client.chat.completions.create(
+                model=MODEL,
+                messages=[{"role":"user","content":prompt}],
+                response_format={"type":"json_object"},
+                max_tokens=1000
+            )
+            data = json.loads(response.choices[0].message.content.strip())
+            data['_input_tokens']  = response.usage.prompt_tokens
+            data['_output_tokens'] = response.usage.completion_tokens
+            data['_tokens']        = response.usage.total_tokens
+            data['org_name']       = org_name
+            data['org_type']       = org_type
+            logger.info(f"  Done: {org_name} — SF={data.get('sector_fit_score')} tokens={data['_tokens']}")
+            return data
+        except Exception as e:
+            logger.error(f"  Failed (async): {org_name} — {e}")
+            return {'org_name': org_name, 'org_type': org_type, '_error': str(e),
+                    '_input_tokens':0, '_output_tokens':0, '_tokens':0}
+
+async def score_all_async(orgs_to_score, checkpoint_dict, progress_cb):
+    semaphore = asyncio.Semaphore(CONCURRENCY)
+    tasks = []
+    for _, row in orgs_to_score.iterrows():
+        org_name = row['Organization']
+        if org_name in checkpoint_dict:
+            continue
+        tasks.append(score_org_async(org_name, row['Org Type'], row['Role'], semaphore))
+
+    results = list(checkpoint_dict.values())
+    completed = 0
+    total = len(tasks)
+
+    for coro in asyncio.as_completed(tasks):
+        data = await coro
+        results.append(data)
+        # Save to checkpoint immediately after each org completes
+        checkpoint_dict[data['org_name']] = data
+        checkpoint_save(checkpoint_dict)
+        completed += 1
+        progress_cb(completed, total)
+
+    return results
+
 def build_scored_df(df, results):
     rows = []
     for _, contact in df.iterrows():
@@ -278,6 +349,65 @@ def build_scored_df(df, results):
             'EM Reasoning':org_data.get('emerging_fit_reasoning',''), 'Org Summary':org_data.get('org_description',''),
         })
     return pd.DataFrame(rows).sort_values('Composite', ascending=False).reset_index(drop=True)
+
+def detect_anomalies(results, scored_df):
+    """
+    Scans scoring results for suspicious patterns and returns a list of flagged items.
+    Each flag has: org_name, flag_type, detail, severity (WARNING / INFO)
+    """
+    flags = []
+
+    for r in results:
+        org   = r.get('org_name', '')
+        sf    = r.get('sector_fit_score', 5)
+        ha    = r.get('halo_score', 5)
+        em    = r.get('emerging_fit_score', 5)
+        is_gp = r.get('is_gp_or_service_provider', False)
+        conf  = r.get('confidence', 'LOW')
+        desc  = (r.get('org_description', '') + ' ' + r.get('sector_fit_reasoning', '')).lower()
+
+        # GP/service provider that scored high
+        if is_gp and sf >= 5:
+            flags.append({'org': org, 'type': 'GP scored high',
+                          'detail': f"Flagged as GP/service provider but Sector Fit = {sf}. Review whether this is a genuine LP.",
+                          'severity': 'WARNING'})
+
+        # GP keywords in description but not flagged
+        gp_keywords = ['placement agent', 'fund of funds manager', 'gp', 'general partner',
+                       'advisory firm', 'investment bank', 'broker']
+        if not is_gp and any(kw in desc for kw in gp_keywords):
+            flags.append({'org': org, 'type': 'Possible GP mislabelled',
+                          'detail': f"Description contains GP-related language but is_gp=False. Sector Fit = {sf}.",
+                          'severity': 'WARNING'})
+
+        # High composite but LOW confidence — result may not be reliable
+        row_match = scored_df[scored_df['Organization'] == org]
+        if not row_match.empty:
+            composite = row_match.iloc[0]['Composite']
+            if composite >= 6.5 and conf == 'LOW':
+                flags.append({'org': org, 'type': 'High score, low confidence',
+                              'detail': f"Composite = {composite:.2f} but confidence is LOW. Enrichment data may be thin.",
+                              'severity': 'WARNING'})
+
+        # Confirmed allocator with suspiciously low sector fit
+        allocator_keywords = ['pension', 'endowment', 'foundation', 'sovereign', 'insurance', 'family office']
+        if any(kw in desc for kw in allocator_keywords) and sf <= 3:
+            flags.append({'org': org, 'type': 'Known allocator scored low',
+                          'detail': f"Org description suggests institutional allocator but Sector Fit = {sf}. May be miscategorised.",
+                          'severity': 'WARNING'})
+
+        # Score outlier — all three AI dimensions maxed or all near zero
+        if sf >= 9 and ha >= 9 and em >= 9:
+            flags.append({'org': org, 'type': 'All dimensions maxed',
+                          'detail': f"SF={sf}, Halo={ha}, EM={em}. Uniformly perfect scores are unusual — verify manually.",
+                          'severity': 'INFO'})
+
+        if sf <= 2 and ha <= 2 and em <= 2:
+            flags.append({'org': org, 'type': 'All dimensions near zero',
+                          'detail': f"SF={sf}, Halo={ha}, EM={em}. May indicate failed enrichment rather than a genuinely poor fit.",
+                          'severity': 'INFO'})
+
+    return flags
 
 def generate_draft(row, sender_name, sender_title, tone):
     logger.info(f"Drafting email: {row['Organization']} (status={row.get('Status','?')})")
@@ -496,50 +626,61 @@ if uploaded_file:
     c2.metric("Unique Orgs",    df['Organization'].nunique())
 
     if st.button("Run Full Pipeline", type="primary"):
-        # Seed results from cache to avoid re-scoring already known orgs
+        # Load checkpoint — resume from where we left off if interrupted
+        checkpoint_dict = checkpoint_load()
+        if checkpoint_dict:
+            st.info(f"Resuming from checkpoint — {len(checkpoint_dict)} org(s) already scored.")
+            logger.info(f"Resuming from checkpoint: {len(checkpoint_dict)} orgs pre-loaded")
+
+        # Merge session cache into checkpoint
         cached = st.session_state.get('results', [])
-        cached_orgs = {r['org_name'] for r in cached}
-        results  = list(cached)
+        for r in cached:
+            if r['org_name'] not in checkpoint_dict:
+                checkpoint_dict[r['org_name']] = r
 
         unique_orgs = df.groupby('Organization').first().reset_index()
-        to_score    = unique_orgs[~unique_orgs['Organization'].isin(cached_orgs)]
+        to_score    = unique_orgs[~unique_orgs['Organization'].isin(checkpoint_dict.keys())]
         total       = len(to_score)
         skipped     = len(unique_orgs) - total
 
         if skipped:
-            st.info(f"{skipped} org(s) loaded from cache — skipping re-score.")
-            logger.info(f"Pipeline started: {total} to score, {skipped} served from cache")
+            st.info(f"{skipped} org(s) already scored — skipping.")
+            logger.info(f"Pipeline started: {total} to score, {skipped} skipped")
         else:
-            logger.info(f"Pipeline started: {total} orgs to score")
+            logger.info(f"Pipeline started: {total} orgs to score (concurrency={CONCURRENCY})")
 
         progress   = st.progress(0)
         status_msg = st.empty()
-        total_in = total_out = 0
 
-        for i, (_, row) in enumerate(to_score.iterrows()):
-            org_name = row['Organization']
-            status_msg.caption(f"Scoring {i+1}/{total} — {org_name}")
-            try:
-                data = score_org(org_name, row['Org Type'], row['Role'])
-                data['org_name'] = org_name
-                data['org_type'] = row['Org Type']
-                results.append(data)
-                total_in  += data.get('_input_tokens', 0)
-                total_out += data.get('_output_tokens', 0)
-            except Exception as e:
-                logger.error(f"Failed to score {org_name}: {e}")
-                st.warning(f"Failed: {org_name} — {e}")
-            progress.progress((i+1)/total if total else 1)
-            time.sleep(0.5)
+        def update_progress(completed, total_tasks):
+            if total_tasks > 0:
+                progress.progress(completed / total_tasks)
+                status_msg.caption(f"Scoring {completed}/{total_tasks} — {CONCURRENCY} in parallel")
 
+        status_msg.caption(f"Scoring {total} orgs ({CONCURRENCY} in parallel)...")
+        results = asyncio.run(score_all_async(to_score, checkpoint_dict, update_progress))
+
+        total_in  = sum(r.get('_input_tokens',0)  for r in results)
+        total_out = sum(r.get('_output_tokens',0) for r in results)
         scored_df = build_scored_df(df, results)
         cost      = (total_in/1000*0.0025) + (total_out/1000*0.0100)
-        logger.info(f"Pipeline complete: {len(results)} orgs total — tokens={total_in+total_out} cost=${cost:.4f}")
+
+        logger.info(f"Pipeline complete: {len(results)} orgs — tokens={total_in+total_out} cost=${cost:.4f}")
         status_msg.caption(f"Pipeline complete — {total} scored, {skipped} from cache")
+
+        # Clear checkpoint on successful completion
+        checkpoint_clear()
+
+        # Run anomaly detection
+        anomalies = detect_anomalies(results, scored_df)
+        if anomalies:
+            logger.info(f"Anomaly detection: {len(anomalies)} flag(s) found")
+
         st.session_state['scored_df'] = scored_df
         st.session_state['results']   = results
         st.session_state['cost']      = st.session_state.get('cost', 0) + cost
         st.session_state['tokens']    = st.session_state.get('tokens', 0) + (total_in + total_out)
+        st.session_state['anomalies'] = anomalies
 
 
 st.markdown("<hr>", unsafe_allow_html=True)
@@ -568,6 +709,31 @@ if page == "📊 Report":
         c3.metric("Strong Fit",      tier_counts.get('STRONG FIT', 0))
         c4.metric("Avg Composite",   round(scored_df['Composite'].mean(), 2))
         c5.metric("Run Cost",        f"${cost:.4f}")
+
+        # ── Anomaly Detection Banner ──
+        anomalies = st.session_state.get('anomalies', [])
+        if anomalies:
+            warnings = [a for a in anomalies if a['severity'] == 'WARNING']
+            infos    = [a for a in anomalies if a['severity'] == 'INFO']
+            with st.expander(f"⚠️  Scoring Anomalies Detected — {len(warnings)} warning(s), {len(infos)} note(s). Click to review.", expanded=True):
+                if warnings:
+                    st.markdown("**Warnings — review before outreach**")
+                    for a in warnings:
+                        st.markdown(f"""
+<div style='background:#2d1b00;border-left:3px solid #e3b341;padding:8px 12px;margin-bottom:6px;border-radius:4px;font-size:13px;'>
+  <span style='color:#e3b341;font-weight:600;'>{a['org']}</span>
+  <span style='color:#8b949e;margin-left:8px;font-size:11px;text-transform:uppercase;'>{a['type']}</span><br>
+  <span style='color:#ccc;'>{a['detail']}</span>
+</div>""", unsafe_allow_html=True)
+                if infos:
+                    st.markdown("**Notes — for awareness**")
+                    for a in infos:
+                        st.markdown(f"""
+<div style='background:#0d1f2d;border-left:3px solid #58a6ff;padding:8px 12px;margin-bottom:6px;border-radius:4px;font-size:13px;'>
+  <span style='color:#58a6ff;font-weight:600;'>{a['org']}</span>
+  <span style='color:#8b949e;margin-left:8px;font-size:11px;text-transform:uppercase;'>{a['type']}</span><br>
+  <span style='color:#ccc;'>{a['detail']}</span>
+</div>""", unsafe_allow_html=True)
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#065f46;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:16px;'>Priority Close — Action Required This Week</div>", unsafe_allow_html=True)
