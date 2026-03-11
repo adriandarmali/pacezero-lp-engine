@@ -554,6 +554,8 @@ if page == "📊 Report":
     else:
         scored_df   = st.session_state['scored_df']
         cost        = st.session_state['cost']
+        tokens      = st.session_state['tokens']
+        results     = st.session_state['results']
         tier_counts = scored_df['Tier'].value_counts()
 
         # Executive Summary
@@ -577,15 +579,14 @@ if page == "📊 Report":
         } for r in results]
         st.dataframe(pd.DataFrame(token_rows).sort_values('Total Tokens', ascending=False), use_container_width=True, hide_index=True)
 
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;'>Pipeline Log</div>", unsafe_allow_html=True)
-        if os.path.exists(LOG_FILE):
-            with open(LOG_FILE) as lf:
-                log_lines = lf.readlines()
-            st.text_area("", value="".join(log_lines[-100:]), height=300, key="log_viewer")
-            st.caption(f"Showing last {min(100, len(log_lines))} of {len(log_lines)} log lines — full log: {LOG_FILE}")
-        else:
-            st.info("No log file yet — run the pipeline to generate logs.")
+        with st.expander("Pipeline Log", expanded=False):
+            if os.path.exists(LOG_FILE):
+                with open(LOG_FILE) as lf:
+                    log_lines = lf.readlines()
+                st.text_area("", value="".join(log_lines[-100:]), height=300, key="log_viewer")
+                st.caption(f"Showing last {min(100, len(log_lines))} of {len(log_lines)} lines — full log: {LOG_FILE}")
+            else:
+                st.info("No log file yet — run the pipeline to generate logs.")
 
 
 # ════════════════════════════════════════
