@@ -395,16 +395,23 @@ if 'scored_df' in st.session_state:
         # Score distribution
         st.markdown("### Score Distribution")
         dc1, dc2, dc3 = st.columns(3)
-        sf_counts = filtered_df['Sector Fit'].value_counts().sort_index().reset_index()
+        
+        # Create full 1-10 index so all scores are visible even if zero
+        full_index = pd.RangeIndex(1, 11)
+        
+        sf_counts = filtered_df['Sector Fit'].value_counts().reindex(full_index, fill_value=0).reset_index()
         sf_counts.columns = ['Score', 'Count']
+        dc1.markdown("**D1 — Sector & Mandate Fit**")
         dc1.bar_chart(sf_counts.set_index('Score'))
         
-        halo_counts = filtered_df['Halo'].value_counts().sort_index().reset_index()
+        halo_counts = filtered_df['Halo'].value_counts().reindex(full_index, fill_value=0).reset_index()
         halo_counts.columns = ['Score', 'Count']
+        dc2.markdown("**D3 — Halo & Strategic Value**")
         dc2.bar_chart(halo_counts.set_index('Score'))
         
-        em_counts = filtered_df['Emerging Fit'].value_counts().sort_index().reset_index()
+        em_counts = filtered_df['Emerging Fit'].value_counts().reindex(full_index, fill_value=0).reset_index()
         em_counts.columns = ['Score', 'Count']
+        dc3.markdown("**D4 — Emerging Manager Fit**")
         dc3.bar_chart(em_counts.set_index('Score'))
 
 
