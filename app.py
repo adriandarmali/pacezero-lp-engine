@@ -284,7 +284,7 @@ with st.sidebar:
 # ════════════════════════════════════════
 st.markdown("""
 <div style='padding:28px 0 8px 0;'>
-    <div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:8px;'>PaceZero Capital Partners — Fund II</div>
+    <div style='font-family:DM Mono,monospace;font-size:11px;color:#6b7280;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:8px;'>PaceZero Capital Partners</div>
     <div style='font-family:Playfair Display,serif;font-size:38px;font-weight:700;color:#1a1a2e;line-height:1.2;'>LP Prospect Scoring Engine</div>
     <div style='font-size:15px;color:#6b7280;margin-top:8px;'>AI-powered enrichment and scoring for your fundraising pipeline</div>
 </div>
