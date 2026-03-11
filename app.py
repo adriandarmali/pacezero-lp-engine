@@ -389,13 +389,11 @@ if uploaded_file:
     df = df.dropna(subset=['Contact Name','Organization'])
     df['Organization']       = df['Organization'].str.strip()
     df['Relationship Depth'] = pd.to_numeric(df['Relationship Depth'], errors='coerce').fillna(5)
-    test_mask = df['Organization'].isin(TEST_ORGS)
-    train_df  = df[~test_mask].copy()
+    train_df = df.copy()
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Contacts",  len(df))
-    c2.metric("Unique Orgs",     train_df['Organization'].nunique())
-    c3.metric("Held Out (Test)", int(test_mask.sum()))
+    c1, c2 = st.columns(2)
+    c1.metric("Total Contacts", len(df))
+    c2.metric("Unique Orgs",    train_df['Organization'].nunique())
 
     if st.button("Run Full Pipeline", type="primary"):
         results  = []
