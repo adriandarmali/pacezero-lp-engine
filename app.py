@@ -235,7 +235,8 @@ def generate_draft(row, sender_name, sender_title, tone):
   - Emerging manager programmes or first-time fund commitments
   - New hires or leadership changes in their investment office
   - Published reports, conference appearances, or media coverage
-Return 2-3 specific findings with dates (last 12-18 months). If nothing recent, say so in one sentence."""
+Return 2-3 specific findings with dates. Include the date for every finding so the reader knows how recent it is.
+If the most relevant information is older than 18 months, include it anyway — just make sure the date is clearly stated."""
     try:
         r1 = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":research_prompt}], max_tokens=300)
         recent_activity = r1.choices[0].message.content.strip()
@@ -754,4 +755,4 @@ elif page == "✉️ Email Drafting":
                                 col_a, col_b = st.columns([1,5])
                                 col_a.caption(f"Tokens: {res['tok']:,}")
                                 with col_b:
-                                    st.link_button("Open in Gmail", gmail_link(res['draft']), key=f"gmail_{res['org']}")
+                                    st.link_button("Open in Gmail", gmail_link(res['draft']))
