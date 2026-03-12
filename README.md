@@ -1,6 +1,6 @@
 # PaceZero LP Prospect Enrichment & Scoring Engine
 
-**PaceZero Capital Partners**
+**48-hour challenge submission — PaceZero Capital Partners**
 
 A fully automated pipeline that ingests a prospect CSV, enriches each organization using AI-powered web research, scores it across four fundraising-relevant dimensions, and surfaces results in a live multi-page Streamlit dashboard with built-in outreach drafting.
 
@@ -11,6 +11,8 @@ A fully automated pipeline that ingests a prospect CSV, enriches each organizati
 ## Model Strategy — Cost Efficiency by Design
 
 `gpt-4o` was chosen as the scoring model as a deliberate cost decision. At $0.0057 per org, the full 89-org run cost $0.50 total — a fraction of what a stronger model would cost at scale. The accuracy gap from using a more cost-efficient model was closed through structured prompt calibration and four rounds of cross-validation against labeled anchor organizations. The five anchor orgs were scored and compared against the expected values from the spec — on average, the model's scores land within about one point of where a human analyst familiar with PaceZero's mandate would place them.
+
+The email research call uses a different model for a different reason. Retrieving recent news, hires, and allocations is a live retrieval task, not a reasoning task. `gpt-4o-search-preview` handles this call specifically because it has native web browsing. The scoring call stays on `gpt-4o` — swapping it would invalidate the calibration results entirely.
 
 ---
 
@@ -66,6 +68,18 @@ The four criteria below map directly to design decisions made throughout the bui
 | The Rockefeller Foundation | 6 / 9 | 10 / 9 | 7 / 8 | 3.50 |
 
 **Anchor MSE: 1.24 — Anchor RMSE: 1.11.** The largest remaining gap is The Rockefeller Foundation, where sector fit came in at 6 against an expected 9. The model found limited current evidence of direct lending or private credit allocations and scored conservatively. In practice Rockefeller is a well-documented alternatives allocator with a broad mandate. PBUCC and Pension Boards both improved significantly after the abbreviation pre-search rule and the emerging manager rubric update took effect.
+
+Collapsing scores into tier buckets gives a classification-level view:
+
+| Org | Expected Tier | Got Tier | Correct |
+|---|---|---|---|
+| The Rockefeller Foundation | PRIORITY CLOSE | STRONG FIT | No — dropped one tier |
+| PBUCC | STRONG FIT | STRONG FIT | Yes |
+| Pension Boards United Church of Christ | STRONG FIT | STRONG FIT | Yes |
+| Meridian Capital Group LLC | WEAK FIT | WEAK FIT | Yes |
+| Inherent Group | STRONG FIT | PRIORITY CLOSE | No — jumped one tier |
+
+Three out of five anchor orgs landed in the correct tier. Both misclassifications were off by exactly one tier in opposite directions. Critically, no LP was classified as WEAK FIT and the confirmed GP (Meridian) was correctly placed at WEAK FIT — the two failure modes that would actually damage the fundraising workflow did not occur.
 
 ---
 
@@ -280,12 +294,12 @@ The threshold for proceeding to test set evaluation was a combined loss below 0.
 
 **Calibration round progression**
 
-| Round | Key change | Combined Loss |
-|---|---|---|
-| Round 1 (baseline) | Initial prompt, no rubrics | 0.61 |
-| Round 2 | Hard GP caps, named LP/GP examples | 0.44 |
-| Round 3 | Explicit scoring bands, abbreviation pre-search rule | 0.21 |
-| Round 4 | Emerging manager rubric rewrite, org-type guidance, Foundation/Endowment investment-office steering | 0.0897 |
+| Round | Key change |
+|---|---|
+| Round 1 (baseline) | Initial prompt, no rubrics |
+| Round 2 | Hard GP caps, named LP/GP examples |
+| Round 3 | Explicit scoring bands, abbreviation pre-search rule |
+| Round 4 | Emerging manager rubric rewrite, org-type guidance, Foundation/Endowment investment-office steering |
 
 **Final test set results**
 
@@ -302,3 +316,17 @@ The test set was evaluated once, after Round 4, with no post-hoc adjustments.
 **Anchor MSE: 1.24 — Anchor RMSE: 1.11**
 
 The largest residual is The Rockefeller Foundation (MSE 3.50), driven by sector fit returning 6 against an expected 9. The model found limited current evidence of direct lending or private credit allocations in its retrieval pass and scored conservatively. This reflects a data availability limitation rather than a rubric failure. All other anchor orgs fell within 1–2 points across all three dimensions.
+
+**Tier-level classification**
+
+Collapsing scores into the four tier buckets gives a classification-level view:
+
+| Org | Expected Tier | Got Tier | Correct |
+|---|---|---|---|
+| The Rockefeller Foundation | PRIORITY CLOSE | STRONG FIT | No — dropped one tier |
+| PBUCC | STRONG FIT | STRONG FIT | Yes |
+| Pension Boards United Church of Christ | STRONG FIT | STRONG FIT | Yes |
+| Meridian Capital Group LLC | WEAK FIT | WEAK FIT | Yes |
+| Inherent Group | STRONG FIT | PRIORITY CLOSE | No — jumped one tier |
+
+Three out of five anchor orgs landed in the correct tier. Both misclassifications were off by exactly one tier in opposite directions. Critically, no LP was classified as WEAK FIT and the confirmed GP (Meridian) was correctly placed at WEAK FIT — the two failure modes that would actually damage the fundraising workflow did not occur.
