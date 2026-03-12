@@ -8,6 +8,15 @@ A fully automated pipeline that ingests a prospect CSV, enriches each organizati
 
 ---
 
+## Changelog
+
+### v1.1 — 11 March Minor Update
+
+**Email research model switched to `gpt-4o-search-preview`**
+The original pipeline used `gpt-4o` for both the scoring call and the email research call. The scoring call works well on `gpt-4o` because it is a reasoning task drawing on training knowledge about org mandates and types. The research call is a retrieval task — it asks for recent news, hires, and allocations — which `gpt-4o` cannot do without live internet access. For low-profile orgs with limited training coverage, this produced generic fallback responses with no useful content. v2 switches the research call specifically to `gpt-4o-search-preview`, which has native web browsing. The scoring call is deliberately unchanged — swapping the scoring model would invalidate the cross-validation calibration results, which were all produced against `gpt-4o`.
+
+---
+
 ## How This System Was Evaluated
 
 The four criteria below map directly to design decisions made throughout the build. Each is addressed in turn.
