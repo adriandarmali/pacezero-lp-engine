@@ -369,7 +369,7 @@ def generate_draft(row, sender_name, sender_title, tone):
 Return 2-3 specific findings with dates. Include the date for every finding so the reader knows how recent it is.
 If the most relevant information is older than 18 months, include it anyway — just make sure the date is clearly stated."""
     try:
-        r1 = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":research_prompt}], max_tokens=300)
+        r1 = client.chat.completions.create(model="gpt-4o-search-preview", messages=[{"role":"user","content":research_prompt}], max_tokens=300)
         recent_activity = r1.choices[0].message.content.strip()
         r_tok = r1.usage.total_tokens
     except Exception:
