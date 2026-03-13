@@ -1,6 +1,6 @@
 # PaceZero LP Prospect Enrichment & Scoring Engine
 
-**48-hour challenge submission — PaceZero Capital Partners**
+**PaceZero Capital Partners**
 
 A fully automated pipeline that ingests a prospect CSV, enriches each organization using AI-powered web research, scores it across four fundraising-relevant dimensions, and surfaces results in a live multi-page Streamlit dashboard with built-in outreach drafting.
 
